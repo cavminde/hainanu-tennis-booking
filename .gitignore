@@ -23,10 +23,17 @@ build_tmp/
 release/
 release_zip/
 release_zip*/
-# 内置 Chromium（约 430MB，用 scripts/fetch_chromium.py 现下）
+# 内置 Chromium（约 430MB，用 README 里的命令现下）
 bundled_chromium/
 *.exe
 *.spec
+# 分发包 zip（265MB，GitHub 单文件上限 100MB，放 Release 里）
+*.zip
+
+# 本机排障用的临时脚本与日志
+过程文件/
+test_*.py
+_inline.js
 
 # ---------------------------------------------------------------------------
 # Python

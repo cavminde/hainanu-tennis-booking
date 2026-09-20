@@ -13,6 +13,7 @@
   "burst": 2,
   "scout_workers": 14,
   "refresh_rounds": 0,
+  "parallel_first": 0,
   "not_open_max_retries": 120,
   "unknown_max_retries": 3,
 

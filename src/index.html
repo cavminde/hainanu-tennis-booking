@@ -289,11 +289,17 @@ details summary:hover{color:var(--accent)}
         </div>
         <div class="row">
           <div><label>单候选连发次数</label><input type="number" id="burst" min="1" max="20"></div>
-          <div><label>侦察并发线程</label><input type="number" id="workers" min="1" max="7"></div>
+          <div><label>侦察并发线程</label><input type="number" id="workers" min="1" max="20"></div>
         </div>
         <div class="row">
+          <div><label>并发首发（0 = 关，串行）</label>
+            <input type="number" id="parFirst" min="0" max="7"
+                   title="0：一个一个试，最稳。2~3：抢单第一轮同时打前 N 个候选，覆盖面更广（实测不触发限流，但每个请求会慢约 100ms；理论上有多单窗口，抢完记得核对订单）"></div>
           <div><label>每 N 个候选刷新空场</label><input type="number" id="refresh" min="0"></div>
+        </div>
+        <div class="row">
           <div><label>未开放最多重试</label><input type="number" id="notopen" min="0"></div>
+          <div><label>&nbsp;</label><div class="hint" style="margin-top:6px" id="parHint"></div></div>
         </div>
         <div class="hint" id="qps">理论上限：约 8 次/秒</div>
         <div class="btns"><button id="bench" style="font-size:12px;padding:6px 12px">📊 接口测速</button>
@@ -652,6 +658,7 @@ function globals(){
     min_interval: parseFloat($('minInt').value)||0.12,
     jitter_ms: parseInt($('jitter').value)||0,
     burst: parseInt($('burst').value)||3,
+    parallel_first: parseInt($('parFirst').value)||0,
     scout_workers: parseInt($('workers').value)||7,
     refresh_rounds: parseInt($('refresh').value)||0,
     not_open_max_retries: parseInt($('notopen').value)||120,
@@ -682,6 +689,8 @@ function apply(c){
   $('minInt').value = c.min_interval ?? 0.15;
   $('jitter').value = c.jitter_ms ?? 0;
   $('burst').value  = c.burst ?? 2;
+  $('parFirst').value = c.parallel_first ?? 0;
+  updParHint();
   $('workers').value= c.scout_workers ?? 14;
   $('refresh').value= c.refresh_rounds ?? 0;
   $('notopen').value= c.not_open_max_retries ?? 120;
@@ -703,6 +712,16 @@ function updDevHint(){
 }
 async function reload(){
   try{ const c = await api('/api/config'); apply(c); }catch(e){}
+}
+function updParHint(){
+  const el = $('parHint'); if(!el) return;
+  const n = parseInt($('parFirst').value)||0;
+  if(n <= 1){
+    el.innerHTML = '<span style="color:#9aa3b2">串行：一个一个试，最稳</span>';
+  } else {
+    el.innerHTML = '<span style="color:#fbbf24">第一轮同时打前 '+n+' 个候选，'
+      + '抢完记得核对「我的订单」</span>';
+  }
 }
 function updQps(){
   const mi=parseFloat($('minInt').value)||0, j=(parseInt($('jitter').value)||0)/1000;
@@ -1123,7 +1142,7 @@ $('antiSw').onclick  = ()=>{ $('antiSw').classList.toggle('on'); scheduleSave();
 $('passphrase').oninput = loadFp;
 $('passphrase').onchange = ()=>{ loadFp(); scheduleSave(); };
 ['minInt','jitter'].forEach(id=>$(id).oninput=updQps);
-['minInt','jitter','burst','workers','refresh','notopen','sched','date'].forEach(id=>{
+['minInt','jitter','burst','parFirst','workers','refresh','notopen','sched','date'].forEach(id=>{
   $(id).addEventListener('change', scheduleSave);
 });
 $('wstart').onchange = ()=>{ pullToAcc(); scheduleSave(); };

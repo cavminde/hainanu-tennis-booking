@@ -188,6 +188,9 @@ def default_config():
         # 抢购的头几秒最金贵：不在候选之间停下来重新侦察（那要多花 300ms）。
         # 候选试完了自然会侦察一次。
         'refresh_rounds': 0,
+        # 并发首发：0=关（纯串行，最稳）。设成 2~3 则第一轮同时打前 N 个候选，
+        # 覆盖面更广，代价是服务端排队让每个请求慢 ~100ms，且理论上多单窗口。
+        'parallel_first': 0,
         'not_open_max_retries': 120,
         'unknown_max_retries': 3,
         # 定时
@@ -1050,6 +1053,11 @@ def run_booking(params, log=print, stop=None):
     not_open_max = int(params.get('not_open_max_retries') or 120)
     unknown_max = int(params.get('unknown_max_retries') or 3)
     burst = max(1, int(params.get('burst') or 3))
+    # 并发首发：抢单第一轮把前 N 个候选同时打出去（0 = 关，老老实实串行）。
+    # 实测：并发 7 个不同场地不会触发限流，但服务端要排队，每个请求的往返
+    # 会从 ~140ms 涨到 ~240ms。所以它的价值不在"更快"，而在"更广"——
+    # 一次就覆盖多个场地，不用等前一个失败再试下一个。
+    parallel_first = max(0, int(params.get('parallel_first') or 0))
     refresh_rounds = max(0, int(params.get('refresh_rounds') or 0))
     workers = max(1, int(params.get('scout_workers') or 7))
 
@@ -1278,16 +1286,32 @@ def run_booking(params, log=print, stop=None):
                 gov.reset()
 
     # ---------- 6. 抢单 ----------
-    log('\n[抢单] 开始（串行提交：同一账号并发下单会导致重复扣费，故不并行提交）')
+    if parallel_first > 1:
+        log(f'\n[抢单] 开始（第一轮并发首发 {parallel_first} 个候选，之后转串行）')
+        log(f'   ⚠ 并发首发理论上存在「同时成交多单」的窗口，'
+            f'抢完请到「我的订单」核对一下。')
+    else:
+        log('\n[抢单] 开始（串行提交：同一账号并发下单会导致重复扣费，故不并行提交）')
     tried = set()
     not_open_streak = 0
     refresh_counter = 0
     booked = None
+    parallel_done = False
+    # 防无限重试：如果候选一直「已被占用」而侦察结果又没变化
+    # （服务端缓存、或者数据本身有抖动），原来的循环会一轮一轮无限试下去。
+    rescans = 0
+    max_rescans = 6
 
     while not stop():
         fresh = refresh_plan()
         fresh = [p for p in fresh if (p['court'], p['slot']) not in tried]
         if not fresh:
+            rescans += 1
+            if rescans > max_rescans:
+                log(f'  已经全量重试 {max_rescans} 轮还是没抢到，停止'
+                    f'（避免无限重试空耗）。')
+                result['stop_reason'] = 'exhausted'
+                break
             if refresh_counter == 0:
                 log('  候选已全部试过，重新侦察一次...')
             gov.wait()
@@ -1301,6 +1325,55 @@ def run_booking(params, log=print, stop=None):
             if not fresh:
                 log('  重新侦察后仍无可用候选，结束。')
                 break
+
+        # ---- 并发首发（可开关）：第一轮把前 N 个候选同时打出去 ----
+        if parallel_first > 1 and not parallel_done:
+            parallel_done = True
+            batch = fresh[:parallel_first]
+            if len(batch) > 1:
+                log('\n>>> 并发首发 ' + str(len(batch)) + ' 个候选：'
+                    + '、'.join(f'{p["court"]} {p["slot"]}' for p in batch))
+                gov.reset()
+                with ThreadPoolExecutor(max_workers=len(batch)) as ex:
+                    outs = list(ex.map(
+                        lambda p: api_submit(session, token, p['sku'], d,
+                                             p['slot']), batch))
+                wins, hard = [], None
+                for p, (v, st, da) in zip(batch, outs):
+                    tried.add((p['court'], p['slot']))
+                    result['attempts'].append({
+                        'court': p['court'], 'slot': p['slot'],
+                        'verdict': v, 'http': st, 'body': brief(da, 200),
+                        'parallel': True})
+                    log(f'    [并发] {p["court"]} {p["slot"]} → '
+                        f'{VERDICT_CN.get(v, v)}'
+                        + ('' if v == 'success' else f' | {brief(da, 100)}'))
+                    if v == 'success':
+                        wins.append(p)
+                    elif v in ('auth_error', 'no_permission'):
+                        hard = hard or (p, v)
+                    elif v in ('pay_error', 'limit_reached'):
+                        hard = hard or (p, v)
+                refresh_counter += len(batch)
+
+                if wins:
+                    booked = wins[0]
+                    log(f'\n✓✓ 抢到！{booked["court"]} {d} {booked["slot"]}（1 小时）')
+                    if len(wins) > 1:
+                        log(f'  ⚠ 并发首发里有 {len(wins)} 个都返回成功：'
+                            + '、'.join(f'{p["court"]} {p["slot"]}' for p in wins))
+                        log('    请到「我的订单」核对，多出来的那几单需要手动退掉。')
+                    else:
+                        log('   已熔断，不会再下第二单。')
+                    break
+                if hard:
+                    p, v = hard
+                    log(f'  × {VERDICT_CN.get(v, v)}（{p["court"]}），停止。')
+                    result['stop_reason'] = v
+                    result['success'] = False
+                    return result
+                # 并发全部没成 → 回到循环顶，剩下的候选按串行继续
+                continue
 
         target = fresh[0]
         key = (target['court'], target['slot'])
