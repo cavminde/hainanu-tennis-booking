@@ -1,0 +1,1157 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<link rel="icon" href="data:,">
+<title>海南大学网球定场 V4.0 · Tennis Everyday</title>
+<style>
+:root{
+  --bg:#0e1014; --panel:#161921; --panel2:#1d212b; --line:#2a2f3a;
+  --txt:#e6e9ef; --dim:#9aa3b2; --accent:#c8f560; --accent2:#7dd3fc;
+  --ok:#4ade80; --bad:#f87171; --warn:#fbbf24; --closed:#3a4050;
+}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--txt);
+  font:14px/1.6 -apple-system,BlinkMacSystemFont,"Segoe UI","Microsoft YaHei",sans-serif}
+.wrap{max-width:1180px;margin:0 auto;padding:18px 18px 60px}
+h1{font-size:19px;margin:0 0 2px;letter-spacing:.5px}
+h1 .v{color:var(--accent);font-weight:700}
+.sub{color:var(--dim);font-size:12px;margin-bottom:16px}
+.grid{display:grid;grid-template-columns:1fr 1fr;gap:14px}
+@media(max-width:900px){.grid{grid-template-columns:1fr}}
+.card{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:14px 16px;margin-bottom:14px}
+.card h2{font-size:13px;margin:0 0 12px;color:var(--accent);letter-spacing:1px;
+  text-transform:uppercase;display:flex;align-items:center;gap:8px}
+.card h2::before{content:"";width:3px;height:13px;background:var(--accent);border-radius:2px}
+label{display:block;font-size:12px;color:var(--dim);margin:10px 0 4px}
+input[type=text],input[type=password],select,input[type=date]{
+  width:100%;background:var(--panel2);border:1px solid var(--line);color:var(--txt);
+  border-radius:8px;padding:8px 10px;font-size:13px;font-family:inherit;outline:none}
+input:focus,select:focus{border-color:var(--accent)}
+input[type=number]{width:100%;background:var(--panel2);border:1px solid var(--line);
+  color:var(--txt);border-radius:8px;padding:7px 9px;font-size:13px;outline:none}
+.row{display:flex;gap:10px}
+.row>*{flex:1;min-width:0}
+.hint{font-size:11px;color:var(--dim);margin-top:4px;line-height:1.5}
+.badge{display:inline-block;padding:1px 7px;border-radius:20px;font-size:11px;
+  background:var(--panel2);border:1px solid var(--line);color:var(--dim)}
+.badge.on{color:var(--accent);border-color:var(--accent)}
+.badge.ok{color:var(--ok);border-color:var(--ok)}
+.badge.warn{color:var(--warn);border-color:var(--warn)}
+.badge.bad{color:var(--bad);border-color:var(--bad)}
+
+/* ---- 账号库表格 ---- */
+table.acct{border-collapse:collapse;width:100%;font-size:12px;margin-top:6px}
+table.acct th,table.acct td{border:1px solid var(--line);padding:4px 5px;text-align:left}
+table.acct th{background:var(--panel2);color:var(--dim);font-weight:500;font-size:11px;
+  text-align:center;white-space:nowrap}
+table.acct tr.on td{background:rgba(200,245,96,.06)}
+table.acct input{width:100%;background:transparent;border:1px solid transparent;
+  color:var(--txt);border-radius:5px;padding:3px 5px;outline:none;
+  font:12px/1.5 "Cascadia Mono",Consolas,"Courier New",monospace}
+table.acct input:hover{border-color:var(--line)}
+table.acct input:focus{border-color:var(--accent);background:var(--bg)}
+.mono{font-family:"Cascadia Mono",Consolas,"Courier New",monospace;font-size:11.5px}
+.tk{display:block;color:var(--accent2);word-break:break-all;
+  font-family:"Cascadia Mono",Consolas,"Courier New",monospace;font-size:11px;line-height:1.45}
+.tk.none{color:#5b6472}
+.accbtns{display:flex;gap:4px;flex-wrap:wrap;justify-content:center}
+
+/* ---- 浏览器式账号页签 ---- */
+.tabs{display:flex;gap:6px;align-items:flex-end;flex-wrap:wrap;
+  border-bottom:1px solid var(--line);margin-bottom:13px}
+.tab{display:flex;align-items:center;gap:6px;padding:7px 12px;
+  border:1px solid var(--line);border-bottom:none;border-radius:9px 9px 0 0;
+  background:var(--panel2);color:var(--dim);font-size:12.5px;cursor:pointer;
+  white-space:nowrap;margin-bottom:-1px}
+.tab:hover{color:var(--txt)}
+.tab.on{background:var(--panel);color:var(--accent);border-bottom:1px solid var(--panel)}
+.tab .tdot{width:7px;height:7px;border-radius:50%;background:#4b5563;flex:0 0 7px}
+.tab .tdot.ok{background:var(--ok);box-shadow:0 0 5px rgba(74,222,128,.7)}
+.tab .tdot.bad{background:var(--bad)}
+.tab .tclose{color:#6b7280;font-size:14px;line-height:1;padding:0 1px;border-radius:4px}
+.tab .tclose:hover{color:var(--bad)}
+.tab.add{color:var(--accent);background:transparent;border:1px dashed var(--line);
+  border-radius:9px;padding:5px 11px;margin-bottom:2px}
+.tab.add:hover{border-color:var(--accent)}
+.tabname{max-width:110px;overflow:hidden;text-overflow:ellipsis}
+.emptybox{border:1px dashed var(--line);border-radius:10px;padding:22px 14px;text-align:center;
+  color:var(--dim);font-size:12px}
+
+/* ---- 场地拖动排序 ---- */
+#courts{list-style:none;margin:0;padding:0;user-select:none}
+#courts li{display:flex;align-items:center;gap:9px;background:var(--panel2);
+  border:1px solid var(--line);border-radius:9px;padding:7px 10px;margin-bottom:6px;
+  cursor:grab;transition:border-color .12s,transform .12s,opacity .12s}
+#courts li:active{cursor:grabbing}
+#courts li.drag{opacity:.35}
+#courts li.over{border-color:var(--accent);transform:translateX(4px)}
+#courts li.off{opacity:.4}
+.ord{width:20px;height:20px;flex:0 0 20px;border-radius:50%;background:var(--accent);
+  color:#10131a;font-size:11px;font-weight:700;display:flex;align-items:center;justify-content:center}
+.handle{color:var(--dim);font-size:15px;letter-spacing:-2px}
+.cname{flex:1;font-size:13px}
+.mini{background:transparent;border:1px solid var(--line);color:var(--dim);
+  border-radius:6px;width:24px;height:22px;cursor:pointer;font-size:11px;line-height:1;padding:0}
+.mini:hover{border-color:var(--accent);color:var(--accent)}
+.mini.wide{width:auto;padding:0 7px}
+.mini.dan:hover{border-color:var(--bad);color:var(--bad)}
+.mini.hot{border-color:#3d5a22;color:#c8f560}
+.mini.hot:hover{border-color:var(--accent);color:var(--accent)}
+/* 密码补填弹窗 */
+.mask{position:fixed;inset:0;background:rgba(0,0,0,.55);z-index:99;
+  display:flex;align-items:center;justify-content:center}
+.mask .box{background:var(--panel);border:1px solid var(--line);border-radius:12px;
+  padding:16px 18px;min-width:320px;max-width:460px;max-height:80vh;overflow:auto}
+.mask h3{margin:0 0 8px;font-size:15px}
+.mask .pwrow{display:flex;align-items:center;gap:8px;margin:8px 0}
+.mask .pwrow label{flex:1;font-size:13px;min-width:0}
+.mask .pwrow input{flex:1.2;min-width:0}
+.mask .foot{display:flex;gap:8px;justify-content:flex-end;margin-top:12px}
+.mask .tip{font-size:12px;color:var(--dim);line-height:1.6}
+.sw{width:34px;height:19px;border-radius:20px;background:#39404f;position:relative;
+  cursor:pointer;transition:background .15s;flex:0 0 34px;border:none;padding:0}
+.sw::after{content:"";position:absolute;top:2px;left:2px;width:15px;height:15px;
+  border-radius:50%;background:#fff;transition:transform .15s}
+.sw.on{background:var(--accent)}
+.sw.on::after{transform:translateX(15px)}
+
+/* ---- 按钮 ---- */
+.btns{display:flex;flex-wrap:wrap;gap:9px;margin-top:6px}
+button{background:var(--panel2);border:1px solid var(--line);color:var(--txt);
+  border-radius:9px;padding:9px 15px;font-size:13px;cursor:pointer;font-family:inherit;
+  transition:.13s}
+button:hover:not(:disabled){border-color:var(--accent);color:var(--accent)}
+button:disabled{opacity:.4;cursor:not-allowed}
+button.pri{background:var(--accent);color:#10131a;border-color:var(--accent);font-weight:600}
+button.pri:hover:not(:disabled){filter:brightness(1.1);color:#10131a}
+button.dan:hover:not(:disabled){border-color:var(--bad);color:var(--bad)}
+
+/* ---- 矩阵 ---- */
+table{border-collapse:collapse;width:100%;font-size:12px;margin-top:4px}
+table.mx th,table.mx td{border:1px solid var(--line);padding:5px 3px;text-align:center}
+table.mx th{background:var(--panel2);color:var(--dim);font-weight:500;font-size:11px}
+table.mx td.name{text-align:left;padding-left:8px;color:var(--dim);white-space:nowrap}
+.c-open{background:rgba(74,222,128,.20);color:var(--ok)}
+.c-occ{background:rgba(248,113,113,.16);color:var(--bad)}
+.c-closed{background:var(--closed);color:#6b7280}
+.legend{display:flex;gap:14px;font-size:11px;color:var(--dim);margin:8px 0 2px;flex-wrap:wrap}
+.legend i{display:inline-block;width:11px;height:11px;border-radius:3px;margin-right:4px;
+  vertical-align:-1px}
+
+/* ---- 日志 ---- */
+#log{background:#0a0c10;border:1px solid var(--line);border-radius:9px;padding:11px;
+  height:330px;overflow-y:auto;font:12px/1.65 "Cascadia Mono",Consolas,"Courier New",monospace;
+  white-space:pre-wrap;word-break:break-all;color:#c9d1d9}
+#log .g{color:var(--ok)}#log .r{color:var(--bad)}#log .y{color:var(--warn)}#log .c{color:var(--accent2)}
+.bar{display:flex;align-items:center;gap:10px;margin-bottom:8px;flex-wrap:wrap}
+.dot{width:8px;height:8px;border-radius:50%;background:var(--dim)}
+.dot.on{background:var(--accent);box-shadow:0 0 8px var(--accent);animation:p 1s infinite}
+@keyframes p{50%{opacity:.35}}
+.presets{display:flex;gap:6px;flex-wrap:wrap;margin-top:5px}
+.chip{font-size:11px;padding:3px 9px;border-radius:20px;background:var(--panel2);
+  border:1px solid var(--line);cursor:pointer;color:var(--dim)}
+.chip:hover{border-color:var(--accent);color:var(--accent)}
+details summary{cursor:pointer;color:var(--dim);font-size:12px;padding:4px 0;outline:none}
+details summary:hover{color:var(--accent)}
+.toast{position:fixed;bottom:22px;left:50%;transform:translateX(-50%);background:var(--accent);
+  color:#10131a;padding:9px 20px;border-radius:22px;font-size:13px;font-weight:600;
+  opacity:0;pointer-events:none;transition:opacity .25s;z-index:99}
+.toast.show{opacity:1}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>海南大学网球定场 <span class="v">V4.0</span> · Tennis Everyday</h1>
+  <div class="sub">V4.0 急速抢单：服务器时钟自动校正（本机慢 1.5s 也不怕）· 到点前预热连接 · 毫秒级开抢 · 多账号账号库 · 内置浏览器过 MFA</div>
+
+  <div class="grid">
+    <div>
+      <!-- 凭证与目标 · 账号库 -->
+      <div class="card">
+        <h2>凭证与目标 · 账号库</h2>
+        <label>目标日期（所有账号共用）</label>
+        <input type="date" id="date">
+
+        <label style="margin-top:12px">已保存的账号（一行一个）</label>
+        <table class="acct">
+          <thead><tr>
+            <th style="width:78px">账号</th>
+            <th style="width:96px">学号</th>
+            <th style="width:74px">用户ID</th>
+            <th>Bearer Token</th>
+            <th style="width:84px">状态</th>
+            <th style="width:110px">操作</th>
+          </tr></thead>
+          <tbody id="accBody"></tbody>
+        </table>
+        <div class="btns" style="margin-top:10px">
+          <button id="btnRetokenAll" style="font-size:12px;padding:6px 12px">🔄 批量重新获取 token</button>
+          <button id="btnVerifyAll" style="font-size:12px;padding:6px 12px">⟳ 批量校验</button>
+          <span class="badge" id="retokenHint" style="align-self:center"></span>
+        </div>
+        <div class="hint">
+          每行末尾的 <b>🔄</b> = 单独给这个账号重新获取一个 token（失效时用）。
+          <b>批量重新获取</b> 默认只处理「失效 / 未校验 / 还没有 token」的账号：
+          有设备信任档案的会<b>自动跳过验证</b>，没有的会让你补一次门户密码。<br>
+          每一行的「账号 / 学号 / 用户ID」都可以直接点开改。
+          用户ID 登录后会自动从平台取回来；查「我的订单」时会用到它，取不到也不影响抢单。<br>
+          Token 默认只显示前 18 位，点 <b>👁</b> 看全、点 <b>复制</b> 拷走。
+        </div>
+      </div>
+
+      <!-- Token 自动获取 -->
+      <div class="card" style="border-color:#2f3a1f">
+        <h2 style="color:#c8f560">Token 自动获取</h2>
+        <div class="bar" style="margin-bottom:6px">
+          <span class="badge" id="caBadge">证书：检测中</span>
+          <span class="badge" id="proxyBadge">代理：--</span>
+        </div>
+
+        <label>方式一 · 学号 + 门户密码登录（统一身份认证 CAS）</label>
+        <div class="row">
+          <div><input type="text" id="luser" placeholder="学号 / 工号"></div>
+          <div><input type="password" id="lpwd" placeholder="门户密码"></div>
+        </div>
+        <div class="btns">
+          <button class="pri" id="btnLogin">🔑 登录并获取 token</button>
+          <button id="btnClearDev" style="font-size:12px;padding:6px 12px">🧹 清除本账号的设备信任</button>
+        </div>
+        <div class="hint" id="loginTarget"></div>
+        <div class="hint" id="devHint"></div>
+        <div class="hint">
+          走 <code>authserver.hainanu.edu.cn</code> 的 CAS，密码本地 AES 加密后提交。
+          密码只用于这一次请求，<b>不会保存</b>。<br>
+          登录成功后会在上方账号表里<b>追加一行</b>（账号二、账号三……）；
+          如果这个学号已经在库里，就<b>原地更新它的 token</b>。<br>
+          账号若开了<b>多因子认证</b>，会自动打开浏览器，学号密码已填好，
+          <b>你只需在浏览器里完成那一步验证</b>（短信 / 扫码 / 企业微信任选）。<br>
+          <b>关于「信任此设备」</b>：浏览器用的是<b>每个账号一个的固定档案
+          （程序目录下的 <code>.profiles\&lt;账号&gt;</code>）</b>，
+          你在里面勾的「信任此设备」和登录会话会<b>留在磁盘上</b>，
+          下次再登多半<b>直接跳过去，什么都不用点</b>。
+          <br><span id="blBadge" class="badge" style="margin-top:6px">浏览器模块：检测中</span>
+          <button id="btnPw" style="display:none;font-size:12px;padding:5px 11px;margin-top:6px">🛠 一键安装 Playwright</button>
+          <div class="hint" id="blHint" style="margin-top:5px"></div>
+        </div>
+
+        <label style="margin-top:14px">方式二 · 抓包（学号密码不可用时）</label>
+        <div class="row" style="margin-bottom:6px">
+          <div><label style="margin:0">抓到的 token 存入</label>
+            <select id="capTarget"></select></div>
+        </div>
+        <div class="btns">
+          <button id="btnCap">📡 开始抓包</button>
+          <button class="dan" id="btnCapStop">■ 停止抓包</button>
+          <button id="btnCaInst" style="font-size:12px;padding:6px 12px">安装证书</button>
+          <button id="btnCaDel" style="font-size:12px;padding:6px 12px">移除证书</button>
+        </div>
+        <div class="hint">
+          ① 首次会弹 Windows 证书确认框，<b>点【是】</b>（没看到就去任务栏找）<br>
+          ② 系统代理临时指向本机 <b>127.0.0.1:8899</b><br>
+          ③ 去微信打开场地小程序，随便点两下<br>
+          ④ 抓到后自动复原代理、写进账号库<br>
+          只解密 <code>hdscs/hdscw</code> 两个域名，其余流量原样转发。
+        </div>
+      </div>
+
+      <!-- 反冲突 -->
+      <div class="card">
+        <h2>反脚本冲突随机（全局）</h2>
+        <div class="bar">
+          <div class="sw on" id="antiSw"></div>
+          <span style="font-size:13px">启用随机分散</span>
+          <span class="badge" id="fp">签 ---</span>
+        </div>
+        <label>个人口令（选填 · 让分发出去的副本序列互不相同）</label>
+        <input type="text" id="passphrase" placeholder="给自己起个暗号，如 wangjie-01">
+        <div class="hint"><b>不用时间做种子</b>：熵来自 持久随机盐文件 + 系统真随机 + 你的口令。
+          同一秒启动的多份脚本，尝试顺序也完全不同，不会互相打架。</div>
+        <div class="btns"><button id="resalt" style="font-size:12px;padding:6px 12px">🎲 重新抽签</button></div>
+      </div>
+    </div>
+
+    <div>
+      <!-- 账号页签 -->
+      <div class="card">
+        <h2>账号页签 · 时间窗口与场地优先顺序</h2>
+        <div class="tabs" id="tabs"></div>
+        <div id="tabBody"></div>
+      </div>
+
+      <!-- 速率 -->
+      <div class="card">
+        <h2>速率与重试（全局）</h2>
+        <div class="row">
+          <div><label>最小间隔（秒）</label><input type="number" id="minInt" step="0.01" min="0"></div>
+          <div><label>随机抖动（毫秒）</label><input type="number" id="jitter" step="10" min="0"></div>
+        </div>
+        <div class="row">
+          <div><label>单候选连发次数</label><input type="number" id="burst" min="1" max="20"></div>
+          <div><label>侦察并发线程</label><input type="number" id="workers" min="1" max="7"></div>
+        </div>
+        <div class="row">
+          <div><label>每 N 个候选刷新空场</label><input type="number" id="refresh" min="0"></div>
+          <div><label>未开放最多重试</label><input type="number" id="notopen" min="0"></div>
+        </div>
+        <div class="hint" id="qps">理论上限：约 8 次/秒</div>
+        <div class="btns"><button id="bench" style="font-size:12px;padding:6px 12px">📊 接口测速</button>
+          <button id="diag" style="font-size:12px;padding:6px 12px">🔍 有效性检测</button></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- 操作 -->
+  <div class="card">
+    <h2>执行</h2>
+    <div class="row" style="margin-bottom:10px">
+      <div><label>用哪个账号抢</label>
+        <select id="scope">
+          <option value="current">只用当前标签页的账号</option>
+          <option value="all">全部账号依次尝试（抢到一个即停）</option>
+        </select></div>
+      <div><label>放号时刻（固定 8:00）</label>
+        <input type="text" id="sched" value="08:00:00" readonly
+               style="color:var(--dim);cursor:default"
+               title="学校每天 8:00 放号，已经写死，不用改"></div>
+      <div style="flex:0 0 140px"><label>&nbsp;</label>
+        <button class="pri" id="goSched" style="width:100%">⏰ 8:00 自动抢</button></div>
+    </div>
+    <div class="hint" id="schedHint" style="margin:-4px 0 8px">
+      两个按钮，两个用法：<b>⚡ 现在就抢</b> = 立刻发出去（下午看到有空场就用它）；
+      <b>⏰ 8:00 自动抢</b> = 挂机等明早 8:00 放号那一刻（会自动校正本机与服务器的时钟差）。
+    </div>
+    <div class="btns">
+      <button class="pri" id="goNow">⚡ 现在就抢</button>
+      <button id="preview">👀 预览空场（不提交）</button>
+      <button class="dan" id="stop">■ 停止</button>
+      <button id="save">💾 保存配置</button>
+    </div>
+    <div class="bar" style="margin-top:11px">
+      <span class="dot" id="dot"></span>
+      <span id="stat" style="font-size:12px;color:var(--dim)">空闲</span>
+      <span class="badge" id="scopeBadge">当前账号：--</span>
+    </div>
+    <div class="hint">选「全部账号依次」时，会按账号表从上到下的顺序，
+      一个号跑完没抢到就换下一个；<b>任何一个号抢到就立刻停手</b>，不会重复扣费。</div>
+  </div>
+
+  <!-- 空场图 -->
+  <div class="card" id="mxCard" style="display:none">
+    <h2>空场图</h2>
+    <div class="legend">
+      <span><i style="background:rgba(74,222,128,.35)"></i>可抢</span>
+      <span><i style="background:rgba(248,113,113,.3)"></i>已占</span>
+      <span><i style="background:var(--closed)"></i>不开放</span>
+    </div>
+    <div style="overflow-x:auto"><table class="mx" id="mx"></table></div>
+  </div>
+
+  <!-- 日志 -->
+  <div class="card">
+    <h2>日志</h2>
+    <div id="log"></div>
+  </div>
+
+  <div class="card" style="border-color:#3a2f1a">
+    <h2 style="color:var(--warn)">安全须知</h2>
+    <div class="hint" style="font-size:12px">
+      · 本工具提交即<b>直接扣校园卡</b>（20 元/小时），无二次确认。<br>
+      · 已内置「一天一单」保护：开抢前查当天订单，有单则拒绝下单。<br>
+      · 提交一律<b>串行</b>，同一账号并发下单会重复扣费。<br>
+      · 账号库只保存 token，<b>不保存密码</b>；token 等同账号密码，请勿外传。
+        config.json 就躺在程序目录下，给别人电脑前先删掉它。<br>
+      · 自动化抢订可能违反小程序用户协议，风险自担。
+    </div>
+  </div>
+</div>
+<div class="toast" id="toast"></div>
+
+<script>
+const $ = id => document.getElementById(id);
+const COURTS = ['1号场','2号场','3号场','4号场','5号场','6号场','7号场'];
+let CFG = {accounts:[], active:''};
+let accounts = [];
+let curId = null;
+let order = [], enabled = {};
+let polling = null, saveTimer = null;
+
+/* ================= 工具 ================= */
+function toast(m){ const t=$('toast'); t.textContent=m; t.classList.add('show');
+  setTimeout(()=>t.classList.remove('show'),1800); }
+function curAcc(){ return accounts.find(a=>a.id===curId) || null; }
+function esc(s){ return String(s==null?'':s).replace(/[&<>"]/g,c=>
+  ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c])); }
+
+/* ================= 账号表 ================= */
+function renderAccounts(){
+  const tb = $('accBody'); tb.innerHTML='';
+  if(!accounts.length){
+    tb.innerHTML = '<tr><td colspan="6" style="text-align:center;color:#9aa3b2;padding:14px">'
+      + '账号库是空的 —— 到下面「方式一」填学号密码登录，第一个账号就会出现在这里</td></tr>';
+    updRetokenHint();
+    return;
+  }
+  accounts.forEach((a,i)=>{
+    const tr = document.createElement('tr');
+    if(a.id===curId) tr.className='on';
+    const tok = (a.token||'').trim();
+    let stBadge = '<span class="badge">未登录</span>';
+    if(tok){
+      stBadge = a.token_ok===true ? '<span class="badge ok">✓ 有效</span>'
+              : a.token_ok===false ? '<span class="badge bad">× 失效</span>'
+              : '<span class="badge warn">未校验</span>';
+    }
+    if(a.has_profile){
+      stBadge += '<br><span class="badge ok" title="该账号的浏览器档案已保存，'
+               + '勾过「信任此设备」的话下次可免验证">信任已存</span>';
+    }
+    const shown = tok ? esc(tok.slice(0,18))+(tok.length>18?'…':'') : '';
+    tr.innerHTML = `
+      <td><input data-f="name" data-id="${a.id}" value="${esc(a.name)}" title="账号名（可改）"></td>
+      <td><input data-f="username" data-id="${a.id}" value="${esc(a.username)}" placeholder="学号" title="学号（可改）"></td>
+      <td><input data-f="app_user_id" data-id="${a.id}" value="${esc(a.app_user_id)}" placeholder="自动" title="用户ID（可改）"></td>
+      <td><span class="tk ${tok?'':'none'}" data-tk="${esc(tok)}" data-id="${a.id}">${tok?shown:'（还没有 token，去下面登录）'}</span></td>
+      <td style="text-align:center">${stBadge}</td>
+      <td><div class="accbtns">
+        <button class="mini wide" data-act="sel" data-id="${a.id}" title="切到这个账号">切</button>
+        <button class="mini" data-act="eye" data-id="${a.id}" title="显示/隐藏完整 token">👁</button>
+        <button class="mini" data-act="copy" data-id="${a.id}" title="复制 token">⧉</button>
+        <button class="mini" data-act="verify" data-id="${a.id}" title="重新校验 token">⟳</button>
+        <button class="mini hot" data-act="retoken" data-id="${a.id}" title="token 失效时重新获取一个">🔄</button>
+        <button class="mini dan" data-act="del" data-id="${a.id}" title="删除这个账号">✕</button>
+      </div></td>`;
+    tb.appendChild(tr);
+  });
+  updRetokenHint();
+
+  tb.querySelectorAll('input[data-f]').forEach(inp=>{
+    inp.addEventListener('change', ()=>{
+      const a = accounts.find(x=>x.id===inp.dataset.id); if(!a) return;
+      a[inp.dataset.f] = inp.value.trim();
+      if(inp.dataset.f==='name') renderTabs();
+      scheduleSave();
+    });
+  });
+  tb.querySelectorAll('[data-act]').forEach(b=>{
+    b.onclick = async ()=>{
+      const id = b.dataset.id, a = accounts.find(x=>x.id===id); if(!a) return;
+      const act = b.dataset.act;
+      if(act==='sel'){ selectAcc(id); }
+      else if(act==='eye'){
+        const sp = tb.querySelector(`span.tk[data-id="${id}"]`);
+        const full = sp.dataset.tk||'';
+        if(!full){ toast('这个账号还没有 token'); return; }
+        sp.dataset.open = sp.dataset.open==='1' ? '0' : '1';
+        sp.textContent = sp.dataset.open==='1' ? full
+          : full.slice(0,18)+(full.length>18?'…':'');
+      }
+      else if(act==='copy'){
+        const full = (a.token||'').trim();
+        if(!full){ toast('这个账号还没有 token'); return; }
+        try{ await navigator.clipboard.writeText(full); toast('token 已复制'); }
+        catch(e){ toast('复制失败，请点 👁 手动选中'); }
+      }
+      else if(act==='verify'){
+        toast('校验中…');
+        const r = await api('/api/accounts/verify',{id});
+        if(!r.ok){ toast(r.msg||'校验失败'); return; }
+        a.token_ok = r.valid; a.token_why = r.why||'';
+        renderAccounts(); renderTabs();
+        toast(r.valid ? '✓ '+a.name+' 的 token 有效' : '× '+a.name+'：'+(r.why||'失效'));
+      }
+      else if(act==='retoken'){ retokenOne(a); }
+      else if(act==='del'){
+        if(!confirm(`确定删除「${a.name}」？它的 token 会一起删掉（不影响其他账号）。`)) return;
+        const r = await api('/api/accounts/remove',{id});
+        if(r.ok){ accounts = r.accounts; CFG.accounts = accounts;
+          if(curId===id) { curId = r.active || (accounts[0]&&accounts[0].id); }
+          renderAll(); toast('已删除'); }
+      }
+    };
+  });
+}
+
+function updRetokenHint(){
+  const el = $('retokenHint'); if(!el) return;
+  const bad = accounts.filter(a=>{
+    const t = (a.token||'').trim();
+    return (a.username||'').trim() && (!t || a.token_ok!==true);
+  }).length;
+  el.className = 'badge' + (bad ? ' bad' : ' ok');
+  el.textContent = bad ? `${bad} 个账号需要重新获取` : '全部有效';
+}
+
+/* ================= 账号页签 ================= */
+function renderTabs(){
+  const box = $('tabs'); box.innerHTML='';
+  accounts.forEach(a=>{
+    const d = document.createElement('div');
+    const tok = (a.token||'').trim();
+    const dot = !tok ? '' : (a.token_ok===true?' ok':(a.token_ok===false?' bad':''));
+    d.className = 'tab' + (a.id===curId?' on':'');
+    d.innerHTML = `<span class="tdot${dot}"></span>`
+      + `<span class="tabname">${esc(a.name)}</span>`
+      + `<span class="tclose" title="删除这个账号">×</span>`;
+    d.onclick = e=>{
+      if(e.target.classList.contains('tclose')){
+        e.stopPropagation();
+        delAcc(a.id, a.name);
+        return;
+      }
+      if(a.id!==curId) selectAcc(a.id);
+    };
+    box.appendChild(d);
+  });
+  const add = document.createElement('div');
+  add.className='tab add'; add.textContent='＋ 新账号'; add.title='新增一个空账号';
+  add.onclick = addAcc;
+  box.appendChild(add);
+
+  const a = curAcc();
+  $('scopeBadge').textContent = '当前账号：' + (a? (a.name + (a.username?`（${a.username}）`:'')) : '--');
+}
+async function delAcc(id,name){
+  if(!confirm(`确定删除「${name}」？它的 token 会一起删掉。`)) return;
+  const r = await api('/api/accounts/remove',{id});
+  if(!r.ok){ toast('删除失败'); return; }
+  accounts = r.accounts; CFG.accounts = accounts;
+  if(curId===id) curId = r.active || (accounts[0]&&accounts[0].id);
+  renderAll(); toast('已删除「'+name+'」');
+}
+async function addAcc(){
+  const r = await api('/api/accounts/add',{});
+  if(!r.ok){ toast('新增失败'); return; }
+  accounts = r.accounts; CFG.accounts = accounts; curId = r.active;
+  renderAll(); toast('已新增，去下面「方式一」给它登录');
+  $('luser').focus();
+}
+async function selectAcc(id){
+  pullToAcc();               // 先把当前页面的改动收进账号对象
+  curId = id; CFG.active = id;
+  pushFromAcc();             // 再把新账号的参数铺到界面上
+  renderAccounts(); renderTabs();
+  const r = await api('/api/accounts/active',{id});
+  if(r.ok) scheduleSave();
+}
+
+/* 页签里的内容：时间窗口 + 场地优先顺序 + 候选排序策略 */
+function tabBodyHTML(){
+  return `
+    <label>时间窗口（只订 1 小时）</label>
+    <div class="row">
+      <div><label>窗口开始</label><select id="wstart"></select></div>
+      <div><label>窗口结束</label><select id="wend"></select></div>
+    </div>
+    <div class="presets">
+      <span class="chip" data-w="18:00-22:00">全晚 18-22</span>
+      <span class="chip" data-w="06:00-22:00">全天 06-22</span>
+      <span class="chip" data-w="18:00-19:00">仅 18-19</span>
+      <span class="chip" data-w="21:00-22:00">仅 21-22</span>
+      <span class="chip" id="chipAll" style="border-color:#c8f560;color:#c8f560">↓ 套用到全部账号</span>
+    </div>
+    <div class="hint">窗口内每个<b>整点 1 小时</b>都是候选；再与各场地开放表求交 ——
+      工作日 19:00-21:00 是网球专业课，不开放。</div>
+
+    <label style="margin-top:12px">场地优先顺序（拖动排序）</label>
+    <ul id="courts"></ul>
+    <div class="hint">拖住 ☰ 上下拖动，或用 ↑↓ 微调。排在越前面越先抢。
+      右侧开关可让某片场地不参与。</div>
+
+    <label style="margin-top:8px">候选排序策略</label>
+    <select id="strategy">
+      <option value="court_rand">场地按拖动顺序 + 时段随机（推荐）</option>
+      <option value="court">严格按拖动顺序</option>
+      <option value="time">时间优先（早的先抢）</option>
+      <option value="shuffle">完全随机（反冲突最强）</option>
+    </select>`;
+}
+function fillTimes(){
+  const opts=[]; for(let h=6;h<=22;h++) opts.push(String(h).padStart(2,'0')+':00');
+  $('wstart').innerHTML = opts.map(v=>`<option value="${v}">${v}</option>`).join('');
+  $('wend').innerHTML   = opts.map(v=>`<option value="${v}">${v}</option>`).join('');
+}
+function renderCourts(){
+  const ul=$('courts'); if(!ul) return; ul.innerHTML='';
+  order.forEach((name,i)=>{
+    const li=document.createElement('li');
+    li.draggable=true; li.dataset.name=name;
+    if(!enabled[name]) li.classList.add('off');
+    li.innerHTML=`
+      <span class="handle">☰</span>
+      <span class="ord">${i+1}</span>
+      <span class="cname">${name}</span>
+      <button class="mini" data-up="${i}" title="上移">↑</button>
+      <button class="mini" data-dn="${i}" title="下移">↓</button>
+      <button class="sw ${enabled[name]?'on':''}" data-sw="${name}"></button>`;
+    li.addEventListener('dragstart',e=>{
+      li.classList.add('drag'); e.dataTransfer.effectAllowed='move';
+      e.dataTransfer.setData('text/plain',name);
+    });
+    li.addEventListener('dragend',()=>{
+      li.classList.remove('drag');
+      ul.querySelectorAll('li').forEach(x=>x.classList.remove('over'));
+    });
+    li.addEventListener('dragover',e=>{ e.preventDefault(); li.classList.add('over'); });
+    li.addEventListener('dragleave',()=>li.classList.remove('over'));
+    li.addEventListener('drop',e=>{
+      e.preventDefault(); li.classList.remove('over');
+      const from=e.dataTransfer.getData('text/plain');
+      if(!from||from===name) return;
+      order.splice(order.indexOf(from),1);
+      order.splice(order.indexOf(name),0,from);
+      renderCourts(); pullToAcc(); scheduleSave();
+    });
+    ul.appendChild(li);
+  });
+  ul.querySelectorAll('[data-up]').forEach(b=>b.onclick=()=>move(+b.dataset.up,-1));
+  ul.querySelectorAll('[data-dn]').forEach(b=>b.onclick=()=>move(+b.dataset.dn,1));
+  ul.querySelectorAll('[data-sw]').forEach(b=>b.onclick=e=>{
+    e.stopPropagation();
+    const n=b.dataset.sw; enabled[n]=!enabled[n];
+    renderCourts(); pullToAcc(); scheduleSave();
+  });
+}
+function move(i,d){
+  const j=i+d; if(j<0||j>=order.length) return;
+  [order[i],order[j]]=[order[j],order[i]];
+  renderCourts(); pullToAcc(); scheduleSave();
+}
+
+/* UI → 当前账号 */
+function pullToAcc(){
+  const a=curAcc(); if(!a) return;
+  if(!$('wstart')) return;
+  a.window_start = $('wstart').value;
+  a.window_end   = $('wend').value;
+  a.sort_strategy= $('strategy').value;
+  a.court_order  = order.slice();
+  a.court_enabled= Object.assign({}, enabled);
+}
+/* 当前账号 → UI */
+function pushFromAcc(){
+  const a=curAcc();
+  if(!$('wstart')) return;
+  if(!a){ order=COURTS.slice(); enabled=Object.fromEntries(COURTS.map(n=>[n,true]));
+          renderCourts(); return; }
+  $('wstart').value = a.window_start||'18:00';
+  $('wend').value   = a.window_end||'22:00';
+  $('strategy').value = a.sort_strategy||'court_rand';
+  order   = (a.court_order&&a.court_order.length)?a.court_order.slice():COURTS.slice();
+  enabled = Object.assign(Object.fromEntries(COURTS.map(n=>[n,true])), a.court_enabled||{});
+  renderCourts();
+}
+
+/* ================= 配置收/发 ================= */
+function globals(){
+  return {
+    target_date: $('date').value,
+    anti_collision: $('antiSw').classList.contains('on'),
+    passphrase: $('passphrase').value.trim(),
+    min_interval: parseFloat($('minInt').value)||0.12,
+    jitter_ms: parseInt($('jitter').value)||0,
+    burst: parseInt($('burst').value)||3,
+    scout_workers: parseInt($('workers').value)||7,
+    refresh_rounds: parseInt($('refresh').value)||0,
+    not_open_max_retries: parseInt($('notopen').value)||120,
+    schedule: $('sched').value.trim(),
+    one_per_day: true,
+  };
+}
+function collectCfg(){
+  pullToAcc();
+  return Object.assign({version:'3.2'}, globals(),
+    {accounts: accounts, active: curId});
+}
+function scheduleSave(){
+  clearTimeout(saveTimer);
+  saveTimer = setTimeout(async ()=>{
+    try{ await api('/api/config', collectCfg()); }catch(e){}
+  }, 400);
+}
+function apply(c){
+  CFG = c;
+  accounts = c.accounts || [];
+  if(!accounts.length) accounts = [];
+  curId = (c.active && accounts.some(a=>a.id===c.active)) ? c.active
+        : (accounts[0] ? accounts[0].id : null);
+  $('date').value = c.target_date||'';
+  $('antiSw').classList.toggle('on', c.anti_collision!==false);
+  $('passphrase').value = c.passphrase||'';
+  $('minInt').value = c.min_interval ?? 0.15;
+  $('jitter').value = c.jitter_ms ?? 0;
+  $('burst').value  = c.burst ?? 2;
+  $('workers').value= c.scout_workers ?? 14;
+  $('refresh').value= c.refresh_rounds ?? 0;
+  $('notopen').value= c.not_open_max_retries ?? 120;
+  $('sched').value  = c.schedule || '07:59:58';
+  renderAll();
+}
+function renderAll(){
+  renderAccounts(); renderTabs(); pushFromAcc();
+  renderCapTarget(); updQps(); loadFp(); updLoginTarget(); updDevHint();
+}
+/* 当前账号的「设备信任」状态 */
+function updDevHint(){
+  const a = curAcc(), el = $('devHint');
+  if(!el) return;
+  if(!a){ el.textContent=''; return; }
+  el.innerHTML = a.has_profile
+    ? `🖥 「${esc(a.name)}」的浏览器档案<b>已保存</b> —— 它勾过的「信任此设备」还在，下次登录大概率<b>直接免验证</b>。`
+    : `🖥 「${esc(a.name)}」还没有浏览器档案。第一次过 MFA 时记得勾上<b>「信任此设备」</b>，之后就不用再过一次了。`;
+}
+async function reload(){
+  try{ const c = await api('/api/config'); apply(c); }catch(e){}
+}
+function updQps(){
+  const mi=parseFloat($('minInt').value)||0, j=(parseInt($('jitter').value)||0)/1000;
+  const q=1/(mi+j/2||0.001);
+  $('qps').textContent = `理论上限：约 ${q.toFixed(1)} 次/秒（含抖动后的平均值）`;
+}
+async function loadFp(){
+  try{
+    const r = await fetch('/api/fingerprint?passphrase='+
+      encodeURIComponent($('passphrase').value.trim()));
+    const j = await r.json();
+    $('fp').textContent = '签 ' + (j.fingerprint||'----');
+    $('fp').title = '本机随机盐：' + (j.salt||'') + '\n每个人都不同，同时启动也不会撞车';
+  }catch(e){ $('fp').textContent='签 ----'; }
+}
+/* 抓包目标下拉 */
+function renderCapTarget(){
+  const sel=$('capTarget'); if(!sel) return;
+  const keep = sel.value;
+  sel.innerHTML = accounts.map(a=>
+    `<option value="${a.id}">${esc(a.name)}${a.username?'（'+esc(a.username)+'）':''}</option>`).join('');
+  if(keep && accounts.some(a=>a.id===keep)) sel.value=keep;
+  else if(curId) sel.value=curId;
+}
+/* 登录框下方提示：这次登录会落到哪一行 */
+function updLoginTarget(){
+  const u=($('luser').value||'').trim();
+  const hit = u ? accounts.find(a=>(a.username||'').trim()===u) : null;
+  const blank = accounts.find(a=>!(a.token||'').trim() && !(a.username||'').trim());
+  let s;
+  if(hit) s = `→ 这个学号已在库里，登录后会<b>更新「${esc(hit.name)}」的 token</b>`;
+  else if(blank) s = `→ 登录后会作为 <b>「${esc(blank.name)}」</b> 填入上方账号表`;
+  else s = `→ 登录后会<b>新建一个账号</b>，追加到上方账号表末尾`;
+  $('loginTarget').innerHTML = s;
+}
+
+/* ================= 请求 ================= */
+async function api(path, body){
+  const r = await fetch(path,{method:body?'POST':'GET',
+    headers:{'Content-Type':'application/json'}, body:body?JSON.stringify(body):undefined});
+  return r.json();
+}
+async function start(path, extra){
+  const p = Object.assign(globals(), {scope:$('scope').value, account_id:curId}, extra||{});
+  await api('/api/config', collectCfg());      // 先落盘，避免用了没保存的参数
+  const r = await api(path, p);
+  if(!r.ok){ toast(r.msg||'启动失败'); return; }
+  begin();
+}
+function begin(){
+  $('dot').classList.add('on');
+  ['goNow','goSched','preview','bench','diag','resalt','btnCap','btnLogin','btnRetokenAll','btnVerifyAll'].forEach(id=>$(id).disabled=true);
+  $('log').innerHTML='';
+  if(polling) clearInterval(polling);
+  polling = setInterval(poll, 700);
+}
+async function poll(){
+  let s;
+  try{ s = await api('/api/status'); }catch(e){ return; }
+  const box=$('log');
+  const txt=(s.log||[]).join('\n')
+    .replace(/[&<>]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;'}[c]))
+    .replace(/✓[^\n]*/g,m=>`<span class="g">${m}</span>`)
+    .replace(/×[^\n]*/g,m=>`<span class="r">${m}</span>`)
+    .replace(/⚠[^\n]*/g,m=>`<span class="y">${m}</span>`)
+    .replace(/>>>[^\n]*/g,m=>`<span class="c">${m}</span>`);
+  if(box.dataset.n != String((s.log||[]).length)){
+    box.innerHTML=txt; box.dataset.n=String((s.log||[]).length);
+    box.scrollTop=box.scrollHeight;
+  }
+  $('stat').textContent = s.running ? `运行中：${s.task||''}` : '空闲';
+  refreshCapStatus();
+  if(!s.running){
+    $('dot').classList.remove('on');
+    ['goNow','goSched','preview','bench','diag','resalt','btnCap','btnLogin','btnRetokenAll','btnVerifyAll'].forEach(id=>$(id).disabled=false);
+    clearInterval(polling); polling=null;
+    // 浏览器过 MFA / 抓包 这两条路径会在服务端改账号库 → 拉回来重画
+    if(!s.running && countdownTimer) stopCountdown();
+    if(s.result && (s.result.account_id || s.result.token || s.result.retoken)) await reload();
+    // 「点 🔄 重取，回来还是同一个 token」—— CAS 免验证放行，等于没重取
+    if(s.result && s.result.same_as_before){
+      toast('△ 拿回来的还是原来那个 token（CAS 免验证放行了）');
+      appendLogLine('△ 这次没换发新 token：浏览器档案里的登录会话还有效，');
+      appendLogLine('  CAS 直接放行，没走完整的登录流程。');
+      appendLogLine('  若它就是失效的那个 → 点「🧹 清除本账号的设备信任」再用密码登录一次。');
+    }
+    if(s.result && s.result.retoken){
+      const d=(s.result.done||[]).length, f=(s.result.fail||[]).length;
+      const same=(s.result.done||[]).filter(x=>x.same).map(x=>x.name);
+      if(same.length){
+        toast('△ '+same.join('、')+'：拿回来的还是原来那个 token'
+              +'（CAS 免验证放行了，没换发新的）。要先「🧹 清除设备信任」再登录一次。');
+        appendLogLine('△ '+same.join('、')+' 没能换到新 token —— 建议清除设备信任后重登。');
+      } else {
+        toast(f ? `重新获取：成功 ${d} 个，失败 ${f} 个（看日志）`
+                : `✓ ${d} 个账号的 token 已更新`);
+      }
+    }
+    if(s.result) renderResult(s.result);
+  }
+}
+function renderResult(res){
+  const m = res.matrix;
+  if(m && Object.keys(m).length){
+    const slots = res.slots||[];
+    let h = '<tr><th class="name">场地</th>' +
+      slots.map(s=>`<th>${s.split('-')[0]}</th>`).join('') + '</tr>';
+    const lab={open:'可抢',occupied:'已占',closed:'－'};
+    for(const [name,row] of Object.entries(m)){
+      if(enabled[name]===false) continue;
+      h += `<tr><td class="name">${name}</td>` +
+        slots.map(s=>`<td class="c-${row[s]||'closed'}" title="${name} ${s}">${lab[row[s]]||'－'}</td>`).join('') +
+        '</tr>';
+    }
+    $('mx').innerHTML=h; $('mxCard').style.display='';
+  }
+  if(res.multi){
+    const okRun = (res.runs||[]).find(r=>r.success);
+    if(res.success){
+      toast(`✓ ${res.account} 抢到 ${res.booked?res.booked.court+' '+res.booked.slot:''}`);
+      appendLogLine(`✓ 成交账号：${res.account}`);
+    } else {
+      const names=(res.runs||[]).map(r=>`${r.account}${r.error?'（'+r.error+'）':'（没抢到）'}`).join('、');
+      toast('全部账号都没抢到');
+      if(names) appendLogLine('△ 各账号结果：'+names);
+    }
+    (res.runs||[]).forEach(r=>{
+      appendLogLine(`   · ${r.account}：${r.success?('抢到 '+(r.booked?r.booked.court+' '+r.booked.slot:'')):(r.error||'没抢到')}`);
+    });
+  } else {
+    if(res.success && res.booked) toast(`✓ 抢到 ${res.booked.court} ${res.booked.slot}`);
+    else if(res.error) toast(res.error);
+  }
+}
+
+/* ================= token 自动获取 ================= */
+async function refreshCapStatus(){
+  try{
+    const j = await api('/api/capture/status');
+    const cb=$('caBadge');
+    cb.textContent='证书：'+(j.ca_installed?'已安装':'未安装');
+    cb.className='badge '+(j.ca_installed?'on':'warn');
+    const pb=$('proxyBadge'), px=j.proxy||'';
+    if(!px){ pb.textContent='代理：未设置'; pb.className='badge'; }
+    else if(px.indexOf('8899')>=0){ pb.textContent='代理：本机 8899（抓包中）'; pb.className='badge on'; }
+    else { pb.textContent='代理：'+px+' ⚠ 可能被 Fiddler 占用'; pb.className='badge warn';
+      pb.title='检测到其他代理（8888 通常是 Fiddler）。抓包时建议先关闭 Fiddler。'; }
+  }catch(e){}
+}
+async function refreshBlStatus(){
+  try{
+    const j = await api('/api/browser/status');
+    const bb=$('blBadge'); if(!bb) return;
+    const env = j.env||{};
+    const brs = Object.keys(env.browsers||{});
+    const hint = $('blHint'), btn = $('btnPw');
+    if(j.ok){
+      bb.textContent = '浏览器模块：可用（'+(brs.join(' / ')||'系统浏览器')+'）';
+      bb.className='badge on';
+      btn.style.display='none'; hint.innerHTML='';
+    } else {
+      bb.textContent='浏览器模块：不可用'; bb.className='badge warn';
+      let s='';
+      if(env.frozen){
+        s='这是打包好的 exe，Playwright 本该已经打进去了 —— 重新打包一次试试。';
+        btn.style.display='none';
+      } else if(!env.playwright){
+        s='当前这个 Python（<code>'+esc(env.python||'')+'</code>）没装 Playwright。'
+         +'点右边按钮自动装（约 1 分钟，只用系统已装的 Edge/Chrome，<b>不下载浏览器</b>），'
+         +'或者干脆改用 <b>dist 里的 exe</b> 启动 —— exe 里已经带好了。';
+        btn.style.display='';
+      } else if(!brs.length){
+        s='Playwright 装了，但机器上没找到 Edge 或 Chrome —— 装一个即可。';
+        btn.style.display='none';
+      } else {
+        s=String(env.error||'').slice(0,180); btn.style.display='none';
+      }
+      hint.innerHTML=s;
+    }
+  }catch(e){}
+}
+refreshBlStatus();
+$('btnPw').onclick = async ()=>{
+  const b=$('btnPw');
+  b.disabled=true; b.textContent='安装中…（约 1 分钟）';
+  toast('正在安装 Playwright，进度看下方日志');
+  try{
+    const r = await api('/api/browser/install',{});
+    toast(r.ok ? '✓ Playwright 装好了' : ('安装失败：'+(r.msg||'')));
+    refreshBlStatus();
+  }catch(e){ toast('请求失败'); }
+  b.disabled=false; b.textContent='🛠 一键安装 Playwright';
+};
+
+$('btnLogin').onclick = async ()=>{
+  const u=$('luser').value.trim(), p=$('lpwd').value;
+  if(!u||!p){ toast('请填学号和密码'); return; }
+  $('btnLogin').disabled=true; $('btnLogin').textContent='登录中…';
+  try{
+    const r = await api('/api/caslogin',{username:u,password:p});
+      if(r.browser){
+      if(r.trusted){
+        toast('正在用已信任的设备登录，多数情况不用点任何东西');
+        appendLogLine('△ 该账号开过多因子认证，已有浏览器档案');
+        appendLogLine('  → 直接用上次勾的「信任此设备」登录，正常几秒内就回来');
+        appendLogLine('  → 万一还是要求验证，就在弹出的浏览器里完成一次');
+      } else {
+        toast('已打开浏览器，请在浏览器里完成多因子认证');
+        appendLogLine('△ 密码正确，账号开了多因子认证（MFA）');
+        appendLogLine('  → 已打开浏览器窗口，学号密码已填好');
+        appendLogLine('  → 这次过完记得勾「信任此设备」，以后就不用再过了');
+      }
+      appendLogLine(`  → token 会自动写进「${r.account_name||'该账号'}」这一行`);
+      begin();
+    } else if(r.mfa){
+      toast(r.msg||'需要多因子认证，但浏览器模块不可用');
+      appendLogLine('△ 密码正确，但账号开了多因子认证（MFA）');
+      appendLogLine('  '+(r.msg||''));
+      appendLogLine('  可改用下面的「抓包」方式。');
+    } else if(r.ok){
+      accounts = r.accounts || accounts;
+      CFG.accounts = accounts;
+      curId = r.active || (r.account && r.account.id) || curId;
+      $('lpwd').value='';
+      renderAll();
+      toast(r.valid ? `✓ 登录成功，已存入「${r.account?r.account.name:''}」`
+                    : '拿到 token 但校验未通过：'+(r.why||''));
+      appendLogLine(r.valid
+        ? `✓ 登录成功 → ${r.account?r.account.name:''}（学号 ${u}，ID ${r.account?(r.account.app_user_id||'自动'):''}）token ${r.preview}`
+        : `△ 登录返回了 token，但校验失败：${r.why}`);
+    } else {
+      toast(r.msg||'登录失败');
+      appendLogLine('× 登录失败：'+(r.msg||''));
+    }
+  }catch(e){ toast('请求失败'); }
+  $('btnLogin').disabled=false; $('btnLogin').textContent='🔑 登录并获取 token';
+};
+
+$('btnClearDev').onclick = async ()=>{
+  const a = curAcc();
+  if(!a){ toast('先选一个账号'); return; }
+  if(!a.has_profile){ toast('「'+a.name+'」本来就没有浏览器档案'); return; }
+  if(!confirm(`清除「${a.name}」的浏览器档案？\n\n`
+    + '清掉后，它勾过的「信任此设备」会一起消失，\n'
+    + '下次登录要重新过一次多因子认证。\n'
+    + '（换电脑、或想用另一个微信号验证时用这个）')) return;
+  const r = await api('/api/accounts/cleardevice',{id:a.id});
+  if(!r.ok && !r.had){ toast(r.msg||'清除失败'); return; }
+  await reload();
+  toast(r.had ? '设备信任已清除' : '本来就没有档案');
+};
+
+/* ============ 重新获取 token（单个 / 批量） ============ */
+
+/* 弹一个补密码的小窗：need = [{id,name,username}]，返回 {id:password} 或 null */
+function askPasswords(need, title, tip){
+  return new Promise(resolve=>{
+    const mask = document.createElement('div');
+    mask.className = 'mask';
+    const rows = need.map(t=>
+      `<div class="pwrow"><label>${esc(t.name)}<br><span style="color:var(--dim);font-size:11px">${esc(t.username)}</span></label>`
+      + `<input type="password" data-id="${esc(t.id)}" placeholder="门户密码"></div>`).join('');
+    mask.innerHTML = `<div class="box">
+      <h3>${esc(title||'需要门户密码')}</h3>
+      <div class="tip">${tip || '这些账号还没有设备信任档案，所以要输一次门户密码。'
+        + '这次登录完记得在浏览器里勾上「信任此设备」，以后批量重取就不用再输了。'}</div>
+      ${rows}
+      <div class="foot">
+        <button id="pwCancel">取消</button>
+        <button class="pri" id="pwOk">开始</button>
+      </div></div>`;
+    document.body.appendChild(mask);
+    const close = v => { mask.remove(); resolve(v); };
+    mask.querySelector('#pwCancel').onclick = ()=>close(null);
+    mask.onclick = e => { if(e.target===mask) close(null); };
+    const go = ()=>{
+      const out = {};
+      let miss = null;
+      mask.querySelectorAll('input[type=password]').forEach(i=>{
+        const v = i.value.trim();
+        if(v) out[i.dataset.id] = v; else miss = i.dataset.id;
+      });
+      if(miss){ toast('还有账号没填密码'); return; }
+      close(out);
+    };
+    mask.querySelector('#pwOk').onclick = go;
+    mask.addEventListener('keydown', e=>{ if(e.key==='Enter') go(); });
+    const first = mask.querySelector('input[type=password]');
+    if(first) first.focus();
+  });
+}
+
+/* 统一的启动入口：先问密码，再让后端开跑 */
+async function startRetoken(ids, onlyInvalid){
+  const plan = await api('/api/accounts/retoken_plan',
+                         {ids: ids||null, only_invalid: !!onlyInvalid});
+  if(!plan.ok){ toast(plan.msg||'请求失败'); return; }
+  if(plan.busy){ toast('已有任务在进行，请先停止'); return; }
+  const targets = plan.targets||[];
+  if(!targets.length){
+    toast(onlyInvalid ? '没有失效的账号，全部都还有效' : '没有可处理的账号');
+    return;
+  }
+  let passwords = {};
+  const need = targets.filter(t=>t.need_password);
+  if(need.length){
+    passwords = await askPasswords(need,
+      need.length>1 ? `${need.length} 个账号需要密码` : '需要门户密码');
+    if(!passwords) return;
+  }
+  const r = await api('/api/accounts/retoken_all',
+    {ids: targets.map(t=>t.id), passwords});
+  if(!r.ok){
+    if(r.need_password && r.need){
+      const pw = await askPasswords(r.need, '还差密码');
+      if(!pw) return;
+      const r2 = await api('/api/accounts/retoken_all',
+        {ids: targets.map(t=>t.id), passwords: Object.assign({}, passwords, pw)});
+      if(!r2.ok){ toast(r2.msg||'启动失败'); return; }
+      begin(); toast(r2.msg||''); return;
+    }
+    toast(r.msg||'启动失败'); return;
+  }
+  begin();
+  toast(r.msg||'');
+}
+
+/* 账号行里的 🔄 */
+async function retokenOne(a){
+  if(!(a.username||'').trim()){ toast('这个账号还没填学号'); return; }
+  if(a.has_profile){
+    const r = await api('/api/accounts/retoken',{id:a.id});
+    if(!r.ok){ toast(r.msg||'启动失败'); return; }
+    begin(); toast(r.msg||''); return;
+  }
+  const pw = await askPasswords([a], '需要门户密码',
+    `「${a.name}」还没有浏览器档案，所以要输一次门户密码。`
+    + '登录成功后记得勾上「信任此设备」，以后点 🔄 就是全自动了。');
+  if(!pw) return;
+  const r = await api('/api/accounts/retoken',
+    {id:a.id, password: pw[a.id]||''});
+  if(!r.ok){ toast(r.msg||'启动失败'); return; }
+  begin(); toast(r.msg||'');
+}
+
+$('btnRetokenAll').onclick = ()=>startRetoken(null, true);
+$('btnVerifyAll').onclick = async ()=>{
+  let ok=0, bad=0;
+  for(const a of accounts){
+    if(!(a.token||'').trim()) continue;
+    const r = await api('/api/accounts/verify',{id:a.id});
+    if(r.ok && r.valid) ok++; else if(r.ok) bad++;
+  }
+  await reload();
+  toast(`校验完成：有效 ${ok} 个，失效 ${bad} 个`);
+};
+
+$('btnCap').onclick = async ()=>{
+  const r = await api('/api/capture',
+    {capture_timeout:300, account_id:$('capTarget').value||curId});
+  if(!r.ok){ toast(r.msg||'启动失败'); return; }
+  begin();
+};
+$('btnCapStop').onclick = async ()=>{ await api('/api/capture/stop'); toast('已停止并复原代理'); };
+$('btnCaInst').onclick = async ()=>{
+  const r = await api('/api/ca/install',{});
+  toast(r.ok?'证书已安装（指纹 '+(r.fingerprint||'')+'）':'安装失败/被取消');
+  refreshCapStatus();
+};
+$('btnCaDel').onclick = async ()=>{ await api('/api/ca/remove',{}); toast('证书已移除'); refreshCapStatus(); };
+function appendLogLine(s){
+  const box=$('log');
+  box.innerHTML += (box.innerHTML?'\n':'')+s;
+  box.scrollTop=box.scrollHeight;
+}
+
+/* ================= 初始化 & 事件 ================= */
+$('tabBody').innerHTML = tabBodyHTML();
+fillTimes();
+
+$('goNow').onclick   = ()=>start('/api/start_now');
+$('preview').onclick = ()=>start('/api/preview');
+let countdownTimer = null;
+function stopCountdown(){
+  if(countdownTimer){ clearInterval(countdownTimer); countdownTimer = null; }
+  const h = $('schedHint');
+  if(h) h.innerHTML = '两个按钮，两个用法：<b>⚡ 现在就抢</b> = 立刻发出去（下午看到有空场就用它）；'
+    + '<b>⏰ 8:00 自动抢</b> = 挂机等明早 8:00 放号那一刻（会自动校正本机与服务器的时钟差）。';
+}
+function startCountdown(){
+  stopCountdown();
+  countdownTimer = setInterval(()=>{
+    const now = new Date();
+    const target = new Date(now); target.setHours(8,0,0,0);
+    if(target <= now) target.setDate(target.getDate()+1);
+    const sec = Math.max(0, Math.floor((target - now)/1000));
+    const f = n => String(n).padStart(2,'0');
+    const txt = sec > 0
+      ? `⏳ 距 8:00 放号还有 <b>${f(Math.floor(sec/3600))}:${f(Math.floor(sec%3600/60))}:${f(sec%60)}</b>`
+        + ` —— 程序会提前 2 秒捂热连接，到点那一刻发出第一枪`
+      : '🔥 开抢中…';
+    $('schedHint').innerHTML = txt;
+  }, 1000);
+}
+$('goSched').onclick = ()=>{
+  start('/api/start_sched',{schedule:'08:00:00'});
+  startCountdown();
+};
+$('bench').onclick   = ()=>start('/api/bench');
+$('diag').onclick    = ()=>start('/api/diagnose');
+$('stop').onclick    = async()=>{ await api('/api/stop'); toast('已发送停止信号'); };
+$('save').onclick    = async()=>{ await api('/api/config', collectCfg()); toast('配置已保存'); };
+$('resalt').onclick  = async()=>{
+  const r = await api('/api/salt',{passphrase:$('passphrase').value.trim()});
+  toast('已重新抽签：'+(r.fingerprint||''));
+};
+$('antiSw').onclick  = ()=>{ $('antiSw').classList.toggle('on'); scheduleSave(); };
+$('passphrase').oninput = loadFp;
+$('passphrase').onchange = ()=>{ loadFp(); scheduleSave(); };
+['minInt','jitter'].forEach(id=>$(id).oninput=updQps);
+['minInt','jitter','burst','workers','refresh','notopen','sched','date'].forEach(id=>{
+  $(id).addEventListener('change', scheduleSave);
+});
+$('wstart').onchange = ()=>{ pullToAcc(); scheduleSave(); };
+$('wend').onchange   = ()=>{ pullToAcc(); scheduleSave(); };
+$('strategy').onchange = ()=>{ pullToAcc(); scheduleSave(); };
+$('luser').oninput   = updLoginTarget;
+$('scope').onchange  = ()=>{
+  $('scopeBadge').textContent = $('scope').value==='all'
+    ? '全部账号依次' : '当前账号：'+((curAcc()&&curAcc().name)||'--');
+};
+document.querySelectorAll('.chip[data-w]').forEach(c=>c.onclick=()=>{
+  const [a,b]=c.dataset.w.split('-');
+  $('wstart').value=a; $('wend').value=b.split(':')[0]+':00';
+  pullToAcc(); scheduleSave();
+});
+$('chipAll').onclick = ()=>{
+  pullToAcc();
+  const a=curAcc(); if(!a){ return; }
+  accounts.forEach(x=>{ x.window_start=a.window_start; x.window_end=a.window_end; });
+  scheduleSave(); toast('时间窗口已套用到全部账号');
+};
+
+fetch('/api/config').then(r=>r.json()).then(apply).catch(()=>apply({accounts:[],active:''}));
+fetch('/api/status').then(r=>r.json()).then(s=>{ if(s.running) begin(); });
+</script>
+
+  <div style="text-align:center;margin:24px 0 8px;color:#9aa3ad;font-size:13px;letter-spacing:.4px">
+    开发者：Cavminde —— 来自一个永远订不到场的朋友
+  </div>
+</body>
+</html>
