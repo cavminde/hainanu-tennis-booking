@@ -28,6 +28,8 @@
   POST /api/bench             接口测速
   POST /api/diagnose          下单有效性检测
   POST /api/salt              重置反冲突随机签
+  POST /api/accounts/password 设置/清除某账号的「记住密码」（挂机自动刷新用）
+  POST /api/refresh           立即刷新 token（手动触发）
   抓包相关：/api/capture  /api/capture/stop  /api/capture/status
             /api/ca/install  /api/ca/remove
 """
@@ -37,7 +39,7 @@ import sys
 import threading
 import time
 import webbrowser
-from datetime import datetime
+from datetime import date as date_cls, datetime, timedelta
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import urlparse
 
@@ -162,6 +164,176 @@ def parse_schedule(raw):
 
 
 # ---------------------------------------------------------------------------
+# 【V4.1】开抢前 N 分钟自动刷新 token（挂机过夜用）
+# ---------------------------------------------------------------------------
+# 为什么要这一步：token 是服务端会话凭据，实测寿命不到 10 小时。
+# 晚上 23 点挂机、早上 8 点开抢，中间隔了 9 小时，旧 token 必然已经 401。
+# 而「信任此设备」的会话同样会过期 —— 实测隔几小时后免密刷新会直接落到
+# 扫码页拿不到 token。所以无人值守刷新必须**记住密码并重新登录一次**。
+
+def scheduled_target(schedule):
+    """定时任务的开抢时刻（今天该点已过就顺延到明天）。"""
+    h, m, s = schedule
+    target = datetime.now().replace(hour=h, minute=m, second=s, microsecond=0)
+    if target <= datetime.now():
+        target += timedelta(days=1)
+    return target
+
+
+def refresh_one_account(cfg, a, timeout, log, stop):
+    """用记住的密码给单个账号重登一次，换新 token 并落盘。"""
+    name = a.get('name') or '?'
+    pwd = acc.account_password(a)
+    if not pwd:
+        log(f'  · {name}：没记住密码，跳过'
+            f'（在「账号」里勾「记住密码」并填一次就能全自动）')
+        return False
+    if not (HAS_BL or bl):
+        log(f'  × {name}：浏览器组件不可用（{_BL_ERR}），无法自动登录')
+        return False
+
+    prof = acc.profile_dir(os.path.dirname(CONFIG_PATH), a.get('id'))
+    old = (a.get('token') or '').strip()
+    log(f'  → {name}（学号 {a.get("username") or "-"}）：重新登录…')
+    t0 = time.time()
+    try:
+        tok, err = bl.browser_login(a.get('username') or '', pwd,
+                                    timeout=timeout,
+                                    log=lambda m: log('      ' + str(m)),
+                                    stop=stop, profile_dir=prof,
+                                    old_token=old or None,
+                                    trust_grace=2.5, headless=False)
+    except Exception as e:
+        log(f'  × {name}：{type(e).__name__}: {e}')
+        return False
+    if not tok:
+        log(f'  × {name}：{err or "没拿到 token"}'
+            f' —— 旧 token 保留，开抢时可能失效')
+        return False
+
+    ok, why = b.verify_token(tok)
+    if not ok:
+        log(f'  × {name}：新 token 校验不通过（{why}），保留旧 token')
+        return False
+
+    # 写回磁盘：重新读一份再改，避免覆盖掉这期间别人（界面）的改动
+    fresh = read_config()
+    hit = False
+    for x in (fresh.get('accounts') or []):
+        if x.get('id') == a.get('id'):
+            x['token'] = tok
+            x['token_time'] = datetime.now().strftime('%m-%d %H:%M')
+            x['token_ok'] = True
+            x['token_why'] = ''
+            hit = True
+    if hit:
+        acc.save(CONFIG_PATH, fresh)
+    a['token'] = tok
+    log(f'  ✓ {name}：token 已刷新（{time.time() - t0:.1f}s）')
+    return True
+
+
+def refresh_all_accounts(cfg, target, log, stop):
+    """逐个账号刷新。串行进行 —— 同时开好几个浏览器会互相抢档案锁。"""
+    todo = [a for a in (cfg.get('accounts') or [])
+            if a.get('enabled', True) and (a.get('username') or '').strip()]
+    if not todo:
+        log('  × 没有可刷新的账号（需要有学号，且没被停用）')
+        return 0, 0
+    ok_n = 0
+    for a in todo:
+        if stop():
+            break
+        # 留给刷新的时间 = 距开抢还剩多久；不能拖过开抢时刻
+        left = (target - datetime.now()).total_seconds()
+        if left <= 5:
+            log('  ! 已经到开抢时刻，剩余账号停止刷新，直接开抢')
+            break
+        timeout = min(int(cfg.get('refresh_timeout') or 900),
+                      max(10, int(left) - 5))
+        if refresh_one_account(cfg, a, timeout, log, stop):
+            ok_n += 1
+    return ok_n, len(todo)
+
+
+def roll_target_date(cfg, log):
+    """挂机跨天：把目标日期滚到「今天 + 可提前天数」。
+
+    不滚的话，昨晚填的日期到明早就超出预约窗口，直接抢不了。
+    """
+    if not cfg.get('auto_roll_date', True):
+        return cfg
+    ahead = int(cfg.get('max_days_ahead') or 2)
+    new_d = (date_cls.today() + timedelta(days=ahead)).isoformat()
+    old_d = cfg.get('target_date') or ''
+    if new_d != old_d:
+        log(f'  · 目标日期自动跟随：{old_d or "未设置"} → {new_d}'
+            f'（今天 + {ahead} 天）')
+        cfg['target_date'] = new_d
+        acc.save(CONFIG_PATH, cfg)
+    return cfg
+
+
+def preflight_refresh(params, log, stop):
+    """定时任务的开抢前准备：等 → 刷新 token → 滚动日期 → 回写 params。
+
+    只在定时任务里跑（params['schedule'] 非空）。立即抢不跑，
+    因为那是「现在就想发一枪」，等几十秒的登录反而误事。
+    """
+    sched = params.get('schedule')
+    if not sched:
+        return
+    cfg = read_config()
+    target = scheduled_target(sched)
+
+    if cfg.get('auto_refresh_token', True):
+        lead = int(cfg.get('refresh_lead_min') or 15)
+        refresh_at = target - timedelta(minutes=lead)
+        now = datetime.now()
+        if refresh_at > now:
+            log('=' * 66)
+            log(f' 挂机中：{refresh_at.strftime("%m-%d %H:%M:%S")} 自动刷新 token，'
+                f'{target.strftime("%m-%d %H:%M:%S")} 开抢')
+            log(f'   （提前 {lead} 分钟刷新；现在 '
+                f'{now.strftime("%m-%d %H:%M:%S")}，还需等 '
+                f'{(refresh_at - now).total_seconds() / 60:.1f} 分钟）')
+            log('   中途想取消，按「停止」即可。')
+            log('=' * 66)
+            while not stop():
+                left = (refresh_at - datetime.now()).total_seconds()
+                if left <= 0:
+                    break
+                time.sleep(min(5.0, max(0.2, left)))
+            if stop():
+                log('  已取消（刷新前）。')
+                return
+            cfg = read_config()
+
+        log('')
+        log('=' * 66)
+        log(f' [刷新 token] 距开抢 {lead} 分钟，开始逐个账号重新登录…')
+        log('=' * 66)
+        ok_n, total = refresh_all_accounts(cfg, target, log, stop)
+        log(f' [刷新 token] 完成：{ok_n}/{total} 个账号拿到新 token')
+        if ok_n < total:
+            log('   ⚠ 有账号没刷新成功，它们会用旧 token 开抢，'
+                '很可能是 401 —— 早上起来看一眼日志。')
+        cfg = read_config()
+
+    cfg = roll_target_date(cfg, log)
+
+    # 把刷新结果回写进本次任务的参数（单账号直跑时用的是 params 里的 token）
+    a = acc.get_account(cfg, params.get('_account_id'))
+    if a is None:
+        a = acc.get_account(cfg, cfg.get('active'))
+    if a is not None:
+        params['token'] = (a.get('token') or '').strip()
+    params['target_date'] = cfg.get('target_date')
+    if params.get('_payload') is not None:
+        params['_payload']['target_date'] = cfg.get('target_date')
+
+
+# ---------------------------------------------------------------------------
 # 任务调度
 # ---------------------------------------------------------------------------
 
@@ -170,6 +342,17 @@ def spawn(kind, params):
         STATE['running'] = True
         _STOP.clear()
         t0 = time.time()
+        # 【V4.1】定时任务：先等到「开抢前 N 分钟」刷新 token + 滚动日期，
+        # 再交给下面的抢单流程。立即抢没有 schedule，这里会直接返回。
+        try:
+            preflight_refresh(params, append_log,
+                              lambda: _STOP.is_set())
+        except Exception as e:
+            append_log(f'[刷新阶段异常] {type(e).__name__}: {e}')
+        if _STOP.is_set():
+            append_log('  已取消（刷新阶段被中止）。')
+            STATE['running'] = False
+            return
         try:
             if kind == 'browser_login':
                 res = run_browser_login(params)
@@ -202,6 +385,33 @@ def spawn(kind, params):
         finally:
             append_log(f'[完成] 耗时 {time.time() - t0:.1f}s')
             STATE['running'] = False
+
+    threading.Thread(target=runner, daemon=True).start()
+
+
+def spawn_refresh(accounts_todo, timeout):
+    """手动「刷新 token」按钮：在后台线程里逐个账号重登。"""
+    def runner():
+        STATE['running'] = True
+        _STOP.clear()
+        t0 = time.time()
+        append_log('=' * 66)
+        append_log(f' 手动刷新 token（{len(accounts_todo)} 个账号）')
+        append_log('=' * 66)
+        cfg = read_config()
+        ok_n = 0
+        for a in accounts_todo:
+            if _STOP.is_set():
+                append_log('  已中止。')
+                break
+            if refresh_one_account(cfg, a, timeout, append_log,
+                                   lambda: _STOP.is_set()):
+                ok_n += 1
+        with _LOCK:
+            STATE['result'] = {'refreshed': ok_n, 'total': len(accounts_todo)}
+        append_log(f' 完成：{ok_n}/{len(accounts_todo)} 个账号拿到新 token'
+                   f'（耗时 {time.time() - t0:.1f}s）')
+        STATE['running'] = False
 
     threading.Thread(target=runner, daemon=True).start()
 
@@ -871,6 +1081,53 @@ class Handler(BaseHTTPRequestHandler):
             acc.save(CONFIG_PATH, cfg)
             self._json({'ok': True, 'valid': ok, 'why': why,
                         'account': _one_view(cfg, a['id'])})
+            return
+
+        # ---- 【V4.1】账号密码（只在本机存，供挂机自动刷新用）----
+        if path == '/api/accounts/password':
+            cfg = read_config()
+            a = acc.get_account(cfg, payload.get('id') or payload.get('account_id'))
+            if not a:
+                self._json({'ok': False, 'msg': '找不到这个账号'})
+                return
+            remember = bool(payload.get('remember', True))
+            pwd = payload.get('password')
+            if pwd is None:
+                # 只切开关，不改密码内容
+                a['remember_password'] = remember
+                if not remember:
+                    a['password'] = ''
+            else:
+                a['password'] = acc.encode_password(str(pwd or ''))
+                a['remember_password'] = remember and bool(str(pwd or ''))
+                if not a['remember_password']:
+                    a['password'] = ''
+            acc.save(CONFIG_PATH, cfg)
+            self._json({'ok': True, 'account': _one_view(cfg, a['id']),
+                        'accounts': _view_accounts(cfg)})
+            return
+
+        # ---- 【V4.1】立即刷新 token（手动触发，睡前点一次或排查用）----
+        if path == '/api/refresh':
+            with _LOCK:
+                busy_now = STATE['running']
+            if busy_now:
+                self._json({'ok': False, 'msg': '有任务在跑，先按停止'})
+                return
+            cfg = read_config()
+            scope = (payload.get('scope') or 'all')
+            aid = payload.get('account_id') or cfg.get('active')
+            todo = [x for x in (cfg.get('accounts') or [])
+                    if x.get('enabled', True) and (x.get('username') or '').strip()]
+            if scope != 'all':
+                todo = [x for x in todo if x.get('id') == aid]
+            if not todo:
+                self._json({'ok': False, 'msg': '没有可刷新的账号（需要有学号）'})
+                return
+            STATE['task'] = '刷新 token'
+            spawn_refresh(todo, int(payload.get('refresh_timeout')
+                                    or cfg.get('refresh_timeout') or 900))
+            self._json({'ok': True, 'accounts': len(todo)})
             return
 
         # ---- 重新获取 token（单个 / 批量）----

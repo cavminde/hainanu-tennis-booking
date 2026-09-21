@@ -1,6 +1,6 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 680 430" width="680" height="430" role="img">
 <title>一次抢单的主流程</title>
-<desc>定时触发后，开抢前 15 分钟刷新 token，再确定当天要抢的场次，然后多账号并行开抢，抢到即停</desc>
+<desc>定时触发后，开抢前 15 分钟用记住的密码重新登录刷新 token（设备信任实测会过期，不能免密），顺带把目标日期滚到今天+2 天，再确定当天要抢的场次，然后多账号并行开抢，抢到即停</desc>
 <defs>
 <marker id="arrow" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
 <path d="M2 1L8 5L2 9" fill="none" stroke="context-stroke" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
@@ -14,12 +14,12 @@
 
 <rect x="140" y="106" width="400" height="56" rx="10" fill="#FAEEDA" stroke="#854F0B" stroke-width="0.5"/>
 <text x="340" y="124" text-anchor="middle" dominant-baseline="central" font-family="sans-serif" font-size="14" font-weight="500" fill="#412402">开抢前 15 分钟：刷新 token</text>
-<text x="340" y="142" text-anchor="middle" dominant-baseline="central" font-family="sans-serif" font-size="12" fill="#854F0B">07:45 逐个账号重取，走设备信任免验证</text>
+<text x="340" y="142" text-anchor="middle" dominant-baseline="central" font-family="sans-serif" font-size="12" fill="#854F0B">07:45 逐个账号重登：用本机记住的密码自动填表（设备信任会过期，不能免密）</text>
 <path d="M340 162 V180" fill="none" stroke="#888780" stroke-width="1.5" marker-end="url(#arrow)"/>
 
 <rect x="140" y="182" width="400" height="56" rx="10" fill="#FAEEDA" stroke="#854F0B" stroke-width="0.5"/>
 <text x="340" y="200" text-anchor="middle" dominant-baseline="central" font-family="sans-serif" font-size="14" font-weight="500" fill="#412402">确定今天要抢的场次</text>
-<text x="340" y="218" text-anchor="middle" dominant-baseline="central" font-family="sans-serif" font-size="12" fill="#854F0B">并发查空场，按每账号窗口与场地优先级排定</text>
+<text x="340" y="218" text-anchor="middle" dominant-baseline="central" font-family="sans-serif" font-size="12" fill="#854F0B">日期自动跟随「今天 + 2 天」，并发查空场，按每账号窗口与场地优先级排定</text>
 <path d="M340 238 V256" fill="none" stroke="#888780" stroke-width="1.5" marker-end="url(#arrow)"/>
 
 <rect x="140" y="258" width="400" height="56" rx="10" fill="#EAF3DE" stroke="#3B6D11" stroke-width="0.5"/>
@@ -33,5 +33,5 @@
 
 <rect x="40" y="106" width="86" height="132" rx="8" fill="none" stroke="#854F0B" stroke-width="0.5" stroke-dasharray="3 3"/>
 <text x="83" y="172" text-anchor="middle" dominant-baseline="central" font-family="sans-serif" font-size="12" fill="#854F0B">V4.1</text>
-<text x="83" y="190" text-anchor="middle" dominant-baseline="central" font-family="sans-serif" font-size="12" fill="#854F0B">待实现</text>
+<text x="83" y="190" text-anchor="middle" dominant-baseline="central" font-family="sans-serif" font-size="12" fill="#854F0B">已实现</text>
 </svg>

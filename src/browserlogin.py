@@ -633,6 +633,32 @@ def _fill_and_submit(page, username, password, log, submit=True):
         return False
 
 
+# CAS 判定失败时页面上的常见说法（命中任意一个就说明这把凭据不对）
+# 说法以实测为准：海大 CAS 输错时页面上写的是
+# 「该账号非常用账号或用户名密码有误」，所以「有误」这一类必须涵盖到。
+_LOGIN_ERR_WORDS = ('用户名或密码错误', '密码错误', '账号或密码错误',
+                    '凭证错误', '用户名密码错误', '账号不存在',
+                    '用户不存在', '密码不正确', '账号已被锁定',
+                    '用户名密码有误', '用户名或密码有误', '密码有误',
+                    '非常用账号',
+                    'Authentication failure', 'Invalid credentials')
+
+
+def _login_error_text(page):
+    """提交后页面里有没有「密码不对」之类的提示；有就返回那句话，没有返回 ''. """
+    try:
+        txt = page.inner_text('body') or ''
+    except Exception:
+        return ''
+    txt = txt[:4000]
+    for w in _LOGIN_ERR_WORDS:
+        if w in txt:
+            # 顺手把提示那一小段抠出来，日志里一眼能看懂
+            i = txt.find(w)
+            return txt[max(0, i - 12): i + len(w) + 12].strip().replace('\n', ' ')
+    return ''
+
+
 def _looks_like_mfa(page):
     try:
         u = page.url or ''
@@ -806,6 +832,14 @@ def _persistent_login(username, password, profile_dir, timeout, log, stop,
 
                 page.wait_for_timeout(1500)
                 _echo_page_hint(page, log)
+                # 【V4.1】自动填表提交后先看看是不是被判「密码错误」。
+                # 不检查的话，挂机刷新遇到记错的密码会一直干等到超时（十几分钟），
+                # 最后一无所获 —— 早失败早提醒。
+                bad = _login_error_text(page)
+                if bad:
+                    log(f'  × 登录页提示：{bad}')
+                    return None, (f'学号或密码不对（页面提示「{bad}」）。'
+                                  '到账号表里重新保存一次密码再试。')
                 if _looks_like_mfa(page):
                     log('      → 已进入多因子认证页，等你手动完成'
                         '（企业微信 / 短信 / 扫码任选，建议勾「信任此设备」）')

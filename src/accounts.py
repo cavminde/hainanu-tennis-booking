@@ -52,6 +52,10 @@ def default_account(cfg=None, name=None):
         'id': new_id(cfg or {}),
         'name': name or new_name(cfg or {}),
         'username': '',
+        # 【V4.1】挂机自动刷新用：只有用户在本机勾选「记住密码」才会落盘，
+        # 且存的是混淆后的串（见 encode_password），不是明文。
+        'password': '',
+        'remember_password': False,
         'app_user_id': '',
         'token': '',
         'token_ok': None,       # True/False/None(未验证)
@@ -96,7 +100,65 @@ def default_config():
         'capture_timeout': 300,
         'capture_port': 8899,
         'mfa_timeout': 300,
+        # 【V4.1】挂机自动刷新 token
+        'auto_refresh_token': True,   # 定时抢时，开抢前自动重登拿新 token
+        'refresh_lead_min': 15,       # 提前多少分钟刷新（默认开抢前 15 分钟）
+        'refresh_timeout': 900,       # 单次刷新最多等多少秒（默认 15 分钟，够等到开抢）
+        # 【V4.1】挂机跨天：目标日期自动跟随「今天 + max_days_ahead」
+        'auto_roll_date': True,
     }
+
+
+# ---------------------------------------------------------------------------
+# 【V4.1】密码的本地存储
+# ---------------------------------------------------------------------------
+# 说明：这是**混淆**，不是加密 —— 目的是让 config.json 里不出现一眼可读的
+# 明文密码（顺手打开、截图、误传时不会直接泄露），挡不住真想解的人。
+# 真正的防线是：config.json 已在 .gitignore 里，永远不会进仓库。
+_OBF_SALT = b'hainanu-tennis-v41'
+
+
+def encode_password(raw):
+    """明文密码 → 可落盘的混淆串。空密码返回空串。"""
+    raw = (raw or '')
+    if not raw:
+        return ''
+    import base64
+    data = raw.encode('utf-8')
+    out = bytearray()
+    for i, ch in enumerate(data):
+        out.append(ch ^ _OBF_SALT[i % len(_OBF_SALT)])
+    return 'v1:' + base64.urlsafe_b64encode(bytes(out)).decode('ascii')
+
+
+def decode_password(stored):
+    """混淆串 → 明文密码。识别不了（空 / 老格式）就原样返回。"""
+    stored = (stored or '')
+    if not stored:
+        return ''
+    if not stored.startswith('v1:'):
+        return stored          # 兼容：早期万一存过明文
+    import base64
+    try:
+        data = base64.urlsafe_b64decode(stored[3:].encode('ascii'))
+    except Exception:
+        return ''
+    out = bytearray()
+    for i, ch in enumerate(data):
+        out.append(ch ^ _OBF_SALT[i % len(_OBF_SALT)])
+    try:
+        return out.decode('utf-8')
+    except Exception:
+        return ''
+
+
+def account_password(a):
+    """取一个账号可用于自动登录的明文密码；没记住密码则返回空串。"""
+    if not a:
+        return ''
+    if not a.get('remember_password'):
+        return ''
+    return decode_password(a.get('password') or '')
 
 
 # ---------------------------------------------------------------------------
@@ -165,7 +227,10 @@ def migrate(raw):
               'min_interval', 'burst', 'scout_workers', 'refresh_rounds',
               'not_open_max_retries', 'unknown_max_retries', 'schedule',
               'one_per_day', 'stop_on_first', 'max_days_ahead', 'capture_timeout',
-              'capture_port', 'mfa_timeout'):
+              'capture_port', 'mfa_timeout',
+              # 【V4.1】挂机自动刷新 / 目标日期跟随
+              'auto_refresh_token', 'refresh_lead_min', 'refresh_timeout',
+              'auto_roll_date'):
         if k in raw:
             cfg[k] = raw[k]
     # 兼容旧键名
@@ -321,6 +386,11 @@ def merge_accounts(stored, incoming):
             a['id'] = old.get('id')          # 认祖归宗，id 保持稳定
             if not (a.get('token') or '').strip():
                 a['token'] = old.get('token', '')
+            # 【V4.1】密码同理：前端从来不回传密码串（view() 里已清空），
+            # 所以空 = 「没改」，必须沿用库里的，绝不能被一次普通保存抹掉。
+            if not (a.get('password') or '').strip():
+                a['password'] = old.get('password', '')
+                a['remember_password'] = bool(old.get('remember_password'))
         out.append(a)
         if a.get('id'):
             seen.add(a['id'])
@@ -370,6 +440,10 @@ def view(cfg):
         d['masked'] = mask(a.get('token'))
         d['has_token'] = bool((a.get('token') or '').strip())
         d['active'] = (a.get('id') == cfg.get('active'))
+        d['has_password'] = bool((a.get('password') or '').strip())
+        # 密码串（哪怕是混淆过的）绝不下发到前端 —— 只给一个「存了没有」的标记。
+        # 前端回传时这格必然是空的，merge_accounts() 会据此保留库里的原值。
+        d['password'] = ''
         out.append(d)
     return out
 

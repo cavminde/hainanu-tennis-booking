@@ -308,6 +308,35 @@ details summary:hover{color:var(--accent)}
     </div>
   </div>
 
+  <!-- 【V4.1】挂机自动刷新 -->
+  <div class="card">
+    <h2>挂机过夜（开抢前自动刷新 token）</h2>
+    <div class="bar" style="margin-bottom:10px">
+      <div class="sw" id="autoRefreshSw"></div>
+      <span style="font-size:13px">开抢前自动重新登录换 token</span>
+      <span class="badge" id="refreshBadge">--</span>
+    </div>
+    <div class="row">
+      <div><label>提前多少分钟刷新</label>
+        <input type="number" id="leadMin" min="1" max="120" step="1"
+               title="默认 15：8:00 开抢 → 7:45 自动重新登录换一个新 token"></div>
+      <div><label>单账号最多等几秒</label>
+        <input type="number" id="refreshTimeout" min="10" max="1800" step="10"
+               title="万一要手机确认多因子认证，浏览器会停在这儿等你；最多等这么久，绝不会拖过开抢时刻"></div>
+    </div>
+    <div class="bar" style="margin-top:8px">
+      <div class="sw" id="autoRollSw"></div>
+      <span style="font-size:13px">目标日期自动跟随「今天 + 可提前天数」</span>
+    </div>
+    <div class="hint" id="rollHint">
+      跨天挂机必开：昨晚填的日期到明早就超出预约窗口，程序会在刷新时自动改到正确的那天。
+    </div>
+    <div class="btns" style="margin-top:9px">
+      <button id="refreshNow" style="font-size:12px;padding:6px 12px">🔑 立即刷新 token</button>
+      <span class="hint" style="align-self:center">睡前点一次，确认「记住密码」已生效</span>
+    </div>
+  </div>
+
   <!-- 操作 -->
   <div class="card">
     <h2>执行</h2>
@@ -419,6 +448,11 @@ function renderAccounts(){
       stBadge += '<br><span class="badge ok" title="该账号的浏览器档案已保存，'
                + '勾过「信任此设备」的话下次可免验证">信任已存</span>';
     }
+    // 【V4.1】挂机自动刷新用的密码是否已存本机
+    if(a.has_password && a.remember_password){
+      stBadge += '<br><span class="badge ok" title="密码已存在本机 config.json（混淆存储），'
+               + '开抢前 15 分钟会自动重新登录换 token">🔑 密码已存</span>';
+    }
     const shown = tok ? esc(tok.slice(0,18))+(tok.length>18?'…':'') : '';
     tr.innerHTML = `
       <td><input data-f="name" data-id="${a.id}" value="${esc(a.name)}" title="账号名（可改）"></td>
@@ -432,6 +466,7 @@ function renderAccounts(){
         <button class="mini" data-act="copy" data-id="${a.id}" title="复制 token">⧉</button>
         <button class="mini" data-act="verify" data-id="${a.id}" title="重新校验 token">⟳</button>
         <button class="mini hot" data-act="retoken" data-id="${a.id}" title="token 失效时重新获取一个">🔄</button>
+        <button class="mini" data-act="pwd" data-id="${a.id}" title="记住密码（挂机过夜自动重新登录换 token 用）">🔑</button>
         <button class="mini dan" data-act="del" data-id="${a.id}" title="删除这个账号">✕</button>
       </div></td>`;
     tb.appendChild(tr);
@@ -474,6 +509,7 @@ function renderAccounts(){
         toast(r.valid ? '✓ '+a.name+' 的 token 有效' : '× '+a.name+'：'+(r.why||'失效'));
       }
       else if(act==='retoken'){ retokenOne(a); }
+      else if(act==='pwd'){ setAccountPassword(a); }
       else if(act==='del'){
         if(!confirm(`确定删除「${a.name}」？它的 token 会一起删掉（不影响其他账号）。`)) return;
         const r = await api('/api/accounts/remove',{id});
@@ -483,6 +519,29 @@ function renderAccounts(){
       }
     };
   });
+}
+
+/* 【V4.1】设置 / 清除某账号的「记住密码」
+   密码只在本机 config.json 里以混淆形式存放（config.json 已在 .gitignore，永不进仓库）。
+   留空并确定 = 删除已存的密码，之后这个账号不再自动刷新。 */
+async function setAccountPassword(a){
+  const has = !!(a.has_password && a.remember_password);
+  const tip = has
+    ? `「${a.name}」已存密码。\n直接确定 = 删除（不再自动刷新）；\n输入新密码 = 替换。`
+    : `为「${a.name}」（${a.username||'学号未填'}）保存密码，用于开抢前自动重新登录。\n`
+      + '只存在本机 config.json，且做了混淆，不会上传。';
+  const p = prompt(tip, '');
+  if(p === null) return;                       // 取消
+  if(has && p === ''){
+    if(!confirm('确定删除已保存的密码？之后这个账号不会自动刷新 token。')) return;
+  }
+  const r = await api('/api/accounts/password',
+    {id:a.id, password:p, remember: p!==''});
+  if(!r.ok){ toast(r.msg||'保存失败'); return; }
+  const i = accounts.findIndex(x=>x.id===a.id);
+  if(i>=0 && r.accounts) accounts = r.accounts;
+  renderAccounts();
+  toast(p==='' ? '已删除密码' : '✓ 密码已保存到本机');
 }
 
 function updRetokenHint(){
@@ -671,6 +730,11 @@ function globals(){
     schedule: $('sched').value.trim(),
     stop_on_first: $('stopFirst').value === '1',
     one_per_day: true,
+    // 【V4.1】挂机自动刷新
+    auto_refresh_token: $('autoRefreshSw').classList.contains('on'),
+    refresh_lead_min: parseInt($('leadMin').value)||15,
+    refresh_timeout: parseInt($('refreshTimeout').value)||900,
+    auto_roll_date: $('autoRollSw').classList.contains('on'),
   };
 }
 function collectCfg(){
@@ -703,6 +767,12 @@ function apply(c){
   $('notopen').value= c.not_open_max_retries ?? 120;
   // 放号时刻固定 8:00（V4.1）：不再从配置回填，避免老配置里的 07:59:58 复活
   $('sched').value  = '08:00:00';
+  // 【V4.1】挂机自动刷新
+  $('autoRefreshSw').classList.toggle('on', c.auto_refresh_token!==false);
+  $('leadMin').value = c.refresh_lead_min ?? 15;
+  $('refreshTimeout').value = c.refresh_timeout ?? 900;
+  $('autoRollSw').classList.toggle('on', c.auto_roll_date!==false);
+  updRefreshHint();
   $('stopFirst').value = (c.stop_on_first === false) ? '0' : '1';
   $('stopFirstRow').style.display = $('scope').value==='all' ? '' : 'none';
   renderAll();
@@ -732,6 +802,21 @@ function updParHint(){
     el.innerHTML = '<span style="color:#fbbf24">第一轮同时打前 '+n+' 个候选，'
       + '抢完记得核对「我的订单」</span>';
   }
+}
+/* 【V4.1】挂机刷新提示：算出「今天/明天 07:45 会自动刷新」给人看 */
+function updRefreshHint(){
+  const badge = $('refreshBadge'); if(!badge) return;
+  const on = $('autoRefreshSw').classList.contains('on');
+  if(!on){ badge.className='badge'; badge.textContent='已关闭'; return; }
+  const lead = parseInt($('leadMin').value)||15;
+  const sched = ($('sched').value||'08:00:00').split(':').map(Number);
+  const t = new Date();
+  t.setHours(sched[0]||8, sched[1]||0, sched[2]||0, 0);
+  if(t <= new Date()) t.setDate(t.getDate()+1);
+  const r = new Date(t.getTime() - lead*60000);
+  const f = n => String(n).padStart(2,'0');
+  badge.className = 'badge ok';
+  badge.textContent = `明天 ${f(r.getHours())}:${f(r.getMinutes())} 自动刷新`;
 }
 function updQps(){
   const mi=parseFloat($('minInt').value)||0, j=(parseInt($('jitter').value)||0)/1000;
@@ -1154,6 +1239,19 @@ $('resalt').onclick  = async()=>{
   toast('已重新抽签：'+(r.fingerprint||''));
 };
 $('antiSw').onclick  = ()=>{ $('antiSw').classList.toggle('on'); scheduleSave(); };
+/* 【V4.1】挂机自动刷新 */
+$('autoRefreshSw').onclick = ()=>{
+  $('autoRefreshSw').classList.toggle('on'); updRefreshHint(); scheduleSave();
+};
+$('autoRollSw').onclick = ()=>{ $('autoRollSw').classList.toggle('on'); scheduleSave(); };
+$('leadMin').oninput = updRefreshHint;
+['leadMin','refreshTimeout'].forEach(id=>$(id).addEventListener('change', scheduleSave));
+$('refreshNow').onclick = async ()=>{
+  const r = await api('/api/refresh',{scope:'all'});
+  if(!r.ok){ toast(r.msg||'启动失败'); return; }
+  toast('开始刷新 '+r.accounts+' 个账号');
+  begin();
+};
 $('passphrase').oninput = loadFp;
 $('passphrase').onchange = ()=>{ loadFp(); scheduleSave(); };
 ['minInt','jitter'].forEach(id=>$(id).oninput=updQps);

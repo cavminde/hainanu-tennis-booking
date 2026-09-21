@@ -253,6 +253,54 @@ check(m[0].get('token') == 'tk1', '回退匹配后 token 也没丢')
 m2 = A.merge_accounts(s, [{'username': '009', 'name': '丙'}])
 check(len(m2) == 3, '真正的新号照常追加')
 
+print('\n[9] V4.1 挂机自动刷新（密码存储 / 日期跟随）')
+# ---- 密码混淆：能还原、不落明文 ----
+raw = 'Tennis@7148'
+enc = A.encode_password(raw)
+check(enc.startswith('v1:'), '密码存成 v1: 前缀的混淆串')
+check(raw not in enc, '混淆串里不出现明文')
+check(A.decode_password(enc) == raw, '能还原成原密码')
+check(A.encode_password('') == '' and A.decode_password('') == '',
+      '空密码往返安全')
+check(A.decode_password('not-a-v1-string') == 'not-a-v1-string',
+      '老格式（万一存过明文）原样返回')
+check(A.decode_password('v1:@@@bad@@@') == '', '坏数据不炸，返回空')
+
+# ---- account_password：只有勾了「记住」才给密码 ----
+a1 = A.default_account({})
+a1['password'] = A.encode_password(raw)
+check(A.account_password(a1) == '', '没勾「记住密码」时拿不到密码')
+a1['remember_password'] = True
+check(A.account_password(a1) == raw, '勾了「记住密码」才拿到明文')
+
+# ---- 整包保存不会把密码抹掉 ----
+stored = [dict(a1, id='acc1', username='u1')]
+incoming = [{'id': 'acc1', 'username': 'u1', 'password': ''}]
+merged = A.merge_accounts(stored, incoming)
+check(merged[0]['password'] == a1['password'], '前端回传空密码 → 保留库里的')
+check(merged[0]['remember_password'] is True, '「记住」开关也一起保留')
+incoming2 = [{'id': 'acc1', 'username': 'u1', 'password': A.encode_password('new')}]
+check(A.merge_accounts(stored, incoming2)[0]['password'] == A.encode_password('new'),
+      '传了新密码 → 正常覆盖')
+
+# ---- view() 不外泄 ----
+v = A.view({'accounts': [dict(a1, id='acc1')]})[0]
+check(v.get('has_password') is True, 'view() 带出 has_password 标记')
+
+# ---- 新全局参数进了默认配置、也进了迁移白名单（否则「UI 能设、存不住」）----
+dc = A.default_config()
+for k in ('auto_refresh_token', 'refresh_lead_min', 'refresh_timeout',
+          'auto_roll_date'):
+    check(k in dc, f'默认配置里有 {k}')
+check(dc['refresh_lead_min'] == 15, '默认提前 15 分钟刷新')
+check(dc['auto_refresh_token'] is True, '默认开启自动刷新')
+mig = A.migrate({'auto_refresh_token': False, 'refresh_lead_min': 30,
+                 'refresh_timeout': 600, 'auto_roll_date': False})
+check(mig['auto_refresh_token'] is False, '迁移：auto_refresh_token 存得住')
+check(mig['refresh_lead_min'] == 30, '迁移：refresh_lead_min 存得住')
+check(mig['refresh_timeout'] == 600, '迁移：refresh_timeout 存得住')
+check(mig['auto_roll_date'] is False, '迁移：auto_roll_date 存得住')
+
 print('\n' + '=' * 50)
 if FAIL:
     print(f'✗ {len(FAIL)} 项未通过：')
