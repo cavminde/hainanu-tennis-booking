@@ -75,7 +75,7 @@ def default_account(cfg=None, name=None):
 
 def default_config():
     return {
-        'version': '4.0',
+        'version': '4.1',
         'accounts': [],
         'active': '',
         # 以下为所有账号共用的全局参数

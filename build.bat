@@ -1,12 +1,12 @@
 @echo off
 chcp 65001 >nul
 REM ============================================================
-REM  海大网球订场 V4.0 · 打包脚本
-REM  新增：多账号账号库（一个账号一行：名字/学号/用户ID/token）
-REM        时间窗口 + 场地优先顺序 改成按账号切换的浏览器式页签
-REM        每个账号一个独立浏览器档案，保留 CAS「信任该设备」
-REM  源码：src\    产物：dist\HainanU_Tennis_Booking_V4_0.exe（端口 8085）
-REM  最后一步会额外生成分发包（LZMA zip），见 过程文件\make_release_zip_lzma.py
+REM  海大网球订场 V4.1 · 打包脚本
+REM  V4.1 新增：挂机过夜 —— 开抢前 15 分钟自动刷新 token（本机记住密码重登）
+REM              目标日期自动跟随「今天 + 可提前天数」，跨天挂机不再失效
+REM              死代码清理、CAS 报错快速失败、停止按钮修复、登录提速
+REM  源码：src\    产物：dist\HainanU_Tennis_Booking_V4_1.exe（端口 8085，与 V4.0 相同）
+REM  最后一步会额外生成分发包（LZMA zip），见 过程文件\make_release_zip_lzma_v41.py
 REM ============================================================
 cd /d "%~dp0"
 
@@ -32,10 +32,10 @@ echo        使用解释器：%PY%
 echo [1/5] 清理旧构建...
 if exist build rmdir /s /q build
 REM 只删旧 exe 和 spec，保留 dist 里的 config.json / .profiles（用户数据不丢）
-if exist dist\HainanU_Tennis_Booking_V4_0.exe del /q dist\HainanU_Tennis_Booking_V4_0.exe
-if exist HainanU_Tennis_Booking_V4_0.spec del /q HainanU_Tennis_Booking_V4_0.spec
+if exist dist\HainanU_Tennis_Booking_V4_1.exe del /q dist\HainanU_Tennis_Booking_V4_1.exe
+if exist HainanU_Tennis_Booking_V4_1.spec del /q HainanU_Tennis_Booking_V4_1.spec
 
-echo [2/5] 自检（accounts / booker / browserlogin）...
+echo [2/5] 自检（accounts / booker / browserlogin / V4.1 挂机刷新）...
 "%PY%" src\selftest.py
 if errorlevel 1 (
     echo [失败] 自检没过，先修好再打包。
@@ -47,7 +47,7 @@ REM 注意：必须在项目根目录执行，入口写 src\app_server.py，
 REM       --add-data 的路径才是相对于根目录解析的。
 REM       在 src\ 里执行会导致 index.html 找不到。
 "%PY%" -m PyInstaller --clean --noconfirm --onefile --console ^
-    --name HainanU_Tennis_Booking_V4_0 ^
+    --name HainanU_Tennis_Booking_V4_1 ^
     --distpath "dist" --workpath "build" --specpath "." ^
     --add-data "src/index.html;." ^
     --collect-all playwright ^
@@ -73,21 +73,21 @@ if exist bundled_chromium (
     xcopy /e /i /y bundled_chromium dist\bundled_chromium >nul
 )
 
-echo [5/5] 生成分发包（LZMA 压缩的 zip，约 5-6 分钟，可跳过）...
+echo [5/5] 生成分发包（LZMA 压缩的 zip，约 15-20 分钟，可跳过）...
 echo        如果只想更新本机跑的 exe，按 Ctrl+C 中断即可。
-if exist "过程文件\make_release_zip_lzma.py" (
-    echo        注意：这一步要求 release_zip\HainanU_Tennis_Booking_V4_0\ 已备好最新内容。
-    "%PY%" "过程文件\make_release_zip_lzma.py"
+if exist "过程文件\make_release_zip_lzma_v41.py" (
+    echo        注意：这一步要求 release_zip\HainanU_Tennis_Booking_V4_1\ 已备好最新内容。
+    "%PY%" "过程文件\make_release_zip_lzma_v41.py"
 ) else (
-    echo        （跳过：没找到 过程文件\make_release_zip_lzma.py）
+    echo        （跳过：没找到 过程文件\make_release_zip_lzma_v41.py）
 )
 
 echo.
-echo [完成] 产物：dist\HainanU_Tennis_Booking_V4_0.exe
+echo [完成] 产物：dist\HainanU_Tennis_Booking_V4_1.exe
 echo      连同 dist\bundled_chromium\ 一起拷到任意文件夹（比如桌面）双击即可。
 echo      注意：内置浏览器文件夹 bundled_chromium 必须和 exe 放在同一目录！
 echo      配置文件、设备信任档案都生成在 exe 旁边：
-echo        config.json            账号库 + 全部参数
+echo        config.json            账号库 + 全部参数（含挂机用的密码）
 echo        .profiles\账号id\       该账号的浏览器档案（信任该设备靠它）
 echo        bundled_chromium\       内置 Chromium（无需系统装浏览器）
 echo      服务端口 8085，启动后自动打开浏览器。

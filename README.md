@@ -1,7 +1,9 @@
-# 海南大学网球定场 V4.0 · Tennis Everyday
+# 海南大学网球定场 V4.1 · Tennis Everyday
 
 > **V4.0 的主题是「急速抢单」：把 8:00 放号那一刻的第一发请求做到最快。**
 > 上一版赢在功能多，这一版赢在**快**。
+> **V4.1 的主题是「挂机过夜」**：晚上挂这儿，第二天早上 8:00 自己刷 token、自己抢场。
+> 见下方 [V4.1 新增](#v41-新增挂机过夜开抢前自动刷新-token)。
 
 ## ⚡ V4.0 更新了什么
 
@@ -115,12 +117,13 @@
 
 ```
 源码模式： python src\app_server.py      → 浏览器自动打开 http://127.0.0.1:8085
-打包模式： 双击 dist\HainanU_Tennis_Booking_V4_0.exe
-打包：     双击 build.bat（约 1-2 分钟）
-自检：     python src\selftest.py         （离线，60+ 项断言）
+打包模式： 双击 dist\HainanU_Tennis_Booking_V4_1.exe
+打包：     双击 build.bat（约 1-2 分钟，末步再压 LZMA 分发包）
+自检：     python src\selftest.py         （离线，94 项断言）
 ```
 
-端口分配：V2=8081　V3=8082　V3.1=8083　**V4.0=8085**，互不干扰。
+端口分配：V2=8081　V3=8082　V3.1=8083　**V4.0/V4.1=8085**，互不干扰。
+V4.1 是 V4.0 的**原地升级**：同一个端口、同一份 `config.json`，直接覆盖即可。
 
 ---
 
@@ -262,7 +265,7 @@ CAS 的「信任此设备」勾了也白勾。
 
 ```
 Tennis Booking V4.0\
-├─ dist\HainanU_Tennis_Booking_V4_0.exe   ← 打包产物
+├─ dist\HainanU_Tennis_Booking_V4_1.exe   ← 打包产物
 ├─ config.json                            ← exe 同目录自动生成（账号库 + 全部设置）
 └─ .profiles\                             ← 每个账号一个浏览器档案（信任此设备存这里）
     ├─ acc1\
@@ -281,7 +284,7 @@ Tennis Booking V4.0\
 
 ```
 双击 build.bat（约 1-2 分钟）
-产物：dist\HainanU_Tennis_Booking_V4_0.exe（约 53 MB）
+产物：dist\HainanU_Tennis_Booking_V4_1.exe（约 52 MB）
 ```
 
 `build.bat` 会自动挑一个装了 `playwright` + `PyInstaller` 的解释器，先跑一遍自检再打包。
@@ -304,7 +307,7 @@ playwright install chromium
 
 ```
 Tennis Booking V4.0\
-├─ HainanU_Tennis_Booking_V4_0.exe
+├─ HainanU_Tennis_Booking_V4_1.exe
 └─ bundled_chromium\chrome-win64\chrome.exe     ← 必须和 exe 同一层
 ```
 
@@ -319,12 +322,12 @@ Tennis Booking V4.0\
 
 ### 打成「一个压缩包发出去」
 
-`build.bat` 最后一步会调用 `过程文件\make_release_zip_lzma.py`，生成：
+`build.bat` 最后一步会调用 `过程文件\make_release_zip_lzma_v41.py`，生成：
 
 ```
-HainanU_Tennis_Booking_V4_0_Windows_x64.zip   （约 208 MB）
-└─ HainanU_Tennis_Booking_V4_0\
-   ├─ HainanU_Tennis_Booking_V4_0.exe
+HainanU_Tennis_Booking_V4_1_Windows_x64.zip
+└─ HainanU_Tennis_Booking_V4_1\
+   ├─ HainanU_Tennis_Booking_V4_1.exe
    ├─ bundled_chromium\chrome-win64\
    ├─ 使用前必读.txt
    └─ README.md
@@ -334,12 +337,27 @@ HainanU_Tennis_Booking_V4_0_Windows_x64.zip   （约 208 MB）
 
 - **压缩方式用的是 LZMA**（不是普通 deflate）。同样是 `.zip` 扩展名，
   接收方右键「全部解压缩」或双击就能打开，**不用装任何额外软件**。
-  实测内置 Chromium 的 `chrome.dll`：301 MB → 96 MB（deflate 只能压到 148 MB），
-  整包 278 MB → 208 MB。代价是打包要跑 5-6 分钟（解压只要 10 秒左右）。
-- **包里不含 `config.json` 和 `.profiles\`** —— 那是本机的 token 和设备信任档案，
-  发给别人前一定要排除。脚本里的 `SKIP_FILES` / `SKIP_DIRS` 已经处理好了。
-- 打包前先把要发的内容放进 `release_zip\HainanU_Tennis_Booking_V4_0\`（exe + bundled_chromium + 文档）。
+  实测内置 Chromium 的 `chrome.dll`：301 MB → 96 MB（deflate 只能压到 148 MB）。
+  代价是打包要跑 15-20 分钟（解压只要 10 秒左右）。
+- **包里不含 `config.json` 和 `.profiles\`** —— 那是本机的 token、密码和设备信任档案，
+  发给别人前一定要排除。脚本里的 `SKIP_FILES` / `SKIP_DIRS` 已经处理好了，
+  并且压缩完会做一次**私密数据自检**再报 SHA256。
+- 打包前先把要发的内容放进 `release_zip\HainanU_Tennis_Booking_V4_1\`（exe + bundled_chromium + 文档）。
+  这一步由 `过程文件\prepare_v41_release.py` 自动摆好。
 - 只想更新本机 exe、不需要分包时，`build.bat` 跑到第 4 步按 Ctrl+C 中断即可。
+
+### 验证打包出来的 exe 是不是新代码
+
+**别在 exe 二进制里搜字符串** —— PyInstaller 把 `.pyc` 压缩了，搜不到。
+正确做法是把 exe 真跑起来，打 HTTP 接口断言行为：
+
+```
+python 过程文件\verify_v41_exe.py
+```
+
+它会自动起 exe、开浏览器端口、检查页面里有没有「挂机过夜」卡片和 6 个新控件 id、
+往 `/api/accounts/password` 存一个测试密码、回读 `config.json` 确认盘上是 `v1:` 混淆串
+而不是明文、确认 `/api/accounts` 不下发密码串，最后 `/api/refresh` 能正常响应。
 
 ### 源码模式下如果显示「浏览器模块不可用」
 

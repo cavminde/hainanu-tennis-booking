@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 """
-海南大学网球定场 V4.0 · Tennis Everyday · 本地控制服务
+海南大学网球定场 V4.1 · Tennis Everyday · 本地控制服务
 启动： python app_server.py    然后浏览器打开 http://127.0.0.1:8085
 
 相对 V3.1 的新增：
@@ -64,7 +64,7 @@ except Exception as _e:
     _BL_ERR = str(_e)
 
 HOST = '127.0.0.1'
-PORT = 8085      # V2=8081 V3=8082 V3.1=8083 V4.0=8085，互不干扰
+PORT = 8085      # V2=8081 V3=8082 V3.1=8083 V4.0/V4.1=8085（V4.1 沿用同一个端口，当作 V4.0 的原地升级）
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 # 打包成 exe 后，配置文件放 exe 同目录，方便用户直接改
@@ -1404,7 +1404,7 @@ def main():
 
     url = f'http://{HOST}:{PORT}'
     print('=' * 58)
-    print('  海南大学网球定场 V4.0 · Tennis Everyday 已启动')
+    print('  海南大学网球定场 V4.1 · Tennis Everyday 已启动')
     print(f'  {url}')
     print('  多账号账号库 · 每账号独立时间窗口与场地优先级')
     print('  关闭此窗口即停止服务')

@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <link rel="icon" href="data:,">
-<title>海南大学网球定场 V4.0 · Tennis Everyday</title>
+<title>海南大学网球定场 V4.1 · Tennis Everyday</title>
 <style>
 :root{
   --bg:#0e1014; --panel:#161921; --panel2:#1d212b; --line:#2a2f3a;
@@ -163,8 +163,8 @@ details summary:hover{color:var(--accent)}
 </head>
 <body>
 <div class="wrap">
-  <h1>海南大学网球定场 <span class="v">V4.0</span> · Tennis Everyday</h1>
-  <div class="sub">V4.0 急速抢单：服务器时钟自动校正（本机慢 1.5s 也不怕）· 到点前预热连接 · 毫秒级开抢 · 多账号账号库 · 内置浏览器过 MFA</div>
+<h1>海南大学网球定场 <span class="v">V4.1</span> · Tennis Everyday</h1>
+<div class="sub">V4.1 挂机过夜：开抢前 15 分钟自动刷新 token + 目标日期跟随 · 服务器时钟自动校正 · 到点前预热连接 · 毫秒级开抢 · 多账号并行 · 内置浏览器过 MFA</div>
 
   <div class="grid">
     <div>
@@ -739,7 +739,7 @@ function globals(){
 }
 function collectCfg(){
   pullToAcc();
-  return Object.assign({version:'3.2'}, globals(),
+  return Object.assign({version:'4.1'}, globals(),
     {accounts: accounts, active: curId});
 }
 function scheduleSave(){
