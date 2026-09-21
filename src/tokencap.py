@@ -537,25 +537,6 @@ class TokenCapture:
         uninstall_ca(log=self.log)
 
 
-def capture_token(workdir, timeout=300, log=print, port=DEFAULT_PORT, stop=None):
-    """一键抓 token：准备 → 启动 → 等待 → 复原。返回 token 或 None。"""
-    stop = stop or (lambda: False)
-    cap = TokenCapture(workdir, port=port, log=log)
-    if not cap.prepare():
-        log('× 证书没装成，无法继续。（没点【是】的话再试一次）')
-        return None
-    if not cap.start():
-        return None
-    try:
-        t0 = time.time()
-        while time.time() - t0 < timeout:
-            if cap.token:
-                return cap.token
-            if stop():
-                log('  用户中止。')
-                return None
-            time.sleep(0.3)
-        log(f'× {timeout} 秒内没抓到 —— 确认微信里打开过小程序并点了几个页面。')
-        return None
-    finally:
-        cap.stop(restore=True)
+# 【V4.1 清理】原 capture_token() 一键包装函数已删除：
+# 现由 app_server.run_capture() 分步骤调用 TokenCapture（prepare → start → 轮询 → stop），
+# 包装函数自 V3.2 起已无任何调用点。

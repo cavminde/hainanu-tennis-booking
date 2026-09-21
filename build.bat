@@ -6,6 +6,7 @@ REM  新增：多账号账号库（一个账号一行：名字/学号/用户ID/t
 REM        时间窗口 + 场地优先顺序 改成按账号切换的浏览器式页签
 REM        每个账号一个独立浏览器档案，保留 CAS「信任该设备」
 REM  源码：src\    产物：dist\HainanU_Tennis_Booking_V4_0.exe（端口 8085）
+REM  最后一步会额外生成分发包（LZMA zip），见 过程文件\make_release_zip_lzma.py
 REM ============================================================
 cd /d "%~dp0"
 
@@ -28,20 +29,20 @@ if not defined PY (
 )
 echo        使用解释器：%PY%
 
-echo [1/4] 清理旧构建...
+echo [1/5] 清理旧构建...
 if exist build rmdir /s /q build
 REM 只删旧 exe 和 spec，保留 dist 里的 config.json / .profiles（用户数据不丢）
 if exist dist\HainanU_Tennis_Booking_V4_0.exe del /q dist\HainanU_Tennis_Booking_V4_0.exe
 if exist HainanU_Tennis_Booking_V4_0.spec del /q HainanU_Tennis_Booking_V4_0.spec
 
-echo [2/4] 自检（accounts / booker / browserlogin）...
+echo [2/5] 自检（accounts / booker / browserlogin）...
 "%PY%" src\selftest.py
 if errorlevel 1 (
     echo [失败] 自检没过，先修好再打包。
     pause & exit /b 1
 )
 
-echo [3/4] 打包中（约 1-2 分钟）...
+echo [3/5] 打包中（约 1-2 分钟）...
 REM 注意：必须在项目根目录执行，入口写 src\app_server.py，
 REM       --add-data 的路径才是相对于根目录解析的。
 REM       在 src\ 里执行会导致 index.html 找不到。
@@ -59,7 +60,7 @@ if errorlevel 1 (
     pause & exit /b 1
 )
 
-echo [4/4] 收尾...
+echo [4/5] 收尾...
 REM 不复制 src\config.json —— 那是开发时的配置，别跟着发出去。
 REM exe 首次启动会在自己旁边生成一个干净的 config.json。
 if exist dist\config.json del /q dist\config.json
@@ -70,6 +71,15 @@ if exist bundled_chromium (
     echo 正在复制内置浏览器到 dist\bundled_chromium ...
     if not exist dist\bundled_chromium mkdir dist\bundled_chromium
     xcopy /e /i /y bundled_chromium dist\bundled_chromium >nul
+)
+
+echo [5/5] 生成分发包（LZMA 压缩的 zip，约 5-6 分钟，可跳过）...
+echo        如果只想更新本机跑的 exe，按 Ctrl+C 中断即可。
+if exist "过程文件\make_release_zip_lzma.py" (
+    echo        注意：这一步要求 release_zip\HainanU_Tennis_Booking_V4_0\ 已备好最新内容。
+    "%PY%" "过程文件\make_release_zip_lzma.py"
+) else (
+    echo        （跳过：没找到 过程文件\make_release_zip_lzma.py）
 )
 
 echo.

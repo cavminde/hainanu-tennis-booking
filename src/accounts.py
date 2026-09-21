@@ -87,12 +87,15 @@ def default_config():
         'unknown_max_retries': 3,
         'schedule': '07:59:58',
         'one_per_day': True,
+        # 多账号并行时：抢到一个是否立刻叫停其他账号。
+        # True = 不占多个场；False = 各抢各的（账号各抢不同时间段时用）
+        'stop_on_first': True,
         'max_days_ahead': 2,
+        # 以下三项无 UI 入口，只在代码里被读取、用作默认值兜底，勿删。
         # 供「Token 自动获取」面板回填
         'capture_timeout': 300,
         'capture_port': 8899,
         'mfa_timeout': 300,
-        'login_type': '01',
     }
 
 
@@ -161,8 +164,8 @@ def migrate(raw):
     for k in ('target_date', 'anti_collision', 'passphrase', 'jitter_ms',
               'min_interval', 'burst', 'scout_workers', 'refresh_rounds',
               'not_open_max_retries', 'unknown_max_retries', 'schedule',
-              'one_per_day', 'max_days_ahead', 'capture_timeout',
-              'capture_port', 'mfa_timeout', 'login_type'):
+              'one_per_day', 'stop_on_first', 'max_days_ahead', 'capture_timeout',
+              'capture_port', 'mfa_timeout'):
         if k in raw:
             cfg[k] = raw[k]
     # 兼容旧键名
@@ -375,10 +378,6 @@ def runnable(cfg):
     """参与抢单的账号：启用 + 有 token。"""
     return [a for a in (cfg.get('accounts') or [])
             if a.get('enabled', True) and (a.get('token') or '').strip()]
-
-
-def touch():
-    return datetime.now().strftime('%m-%d %H:%M')
 
 
 def profile_dir(base_dir, acc_id):

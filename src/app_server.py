@@ -20,7 +20,7 @@
   POST /api/accounts/verify   重新校验某个账号的 token
   POST /api/accounts/active   切换当前账号
   POST /api/caslogin          方式一：学号 + 门户密码 → token → 写进账号库
-  POST /api/login             备用登录（H5 接口）
+  POST /api/login             备用登录（H5 接口，无 UI 入口，仅供脚本/调试调用）
   POST /api/preview           侦察空场 + 生成候选（不提交）
   POST /api/start_now         立即抢
   POST /api/start_sched       定时抢
@@ -207,7 +207,21 @@ def spawn(kind, params):
 
 
 def run_multi(params, stop):
-    """按账号库顺序逐个尝试：前一个抢到就停，不再动后面的账号。"""
+    """多账号【真并行】：每个账号一个独立线程，各自按自己的时间窗口同时开抢。
+
+    和旧版的区别：旧版是一个号跑完才轮到下一个（前一个抢到后面就不跑了），
+    第二个账号会迟到几秒甚至等到第二天；现在所有账号在同一个时刻各自开火。
+
+    并行安全的依据：
+      - 每个账号用 account_params() 合成独立参数（token / 时间窗口 / 场地顺序都是自己的），
+        线程之间不共享任何可变对象；
+      - booker.run_booking 不写配置也不写文件，只是纯读 + 发 HTTP 请求；
+      - 写日志的 append_log 内部有锁，多线程同时写不会乱。
+
+    抢到一个是否停手由 params['stop_on_first'] 决定：
+      - True（默认）：任何一个账号抢到就立刻通知其他线程收手，避免占多个场；
+      - False：各抢各的，谁抢到都继续，适合「不同账号抢不同时间段」。
+    """
     log = append_log
     cfg = read_config()
     todo = acc.runnable(cfg)
@@ -216,48 +230,83 @@ def run_multi(params, stop):
         log('× ' + msg)
         return {'success': False, 'error': msg, 'multi': True, 'runs': []}
 
+    stop_on_first = bool(params.get('stop_on_first', True))
+
     log('=' * 66)
-    log(f' 多账号依次尝试：共 {len(todo)} 个账号参与')
-    log('   ' + ' → '.join(a.get('name') or '?' for a in todo))
+    log(f' 多账号【并行】开抢：共 {len(todo)} 个账号同时参与')
+    log('   ' + ' ｜ '.join(a.get('name') or '?' for a in todo))
+    log(f'   抢到后：{"立刻全体收手" if stop_on_first else "各自继续（互不影响）"}')
     log('=' * 66)
 
-    merged = {'success': False, 'multi': True, 'runs': [], 'accounts': len(todo)}
-    for i, a in enumerate(todo, 1):
-        if stop():
-            log('  已中止。')
-            break
+    merged = {'success': False, 'multi': True, 'runs': [],
+              'accounts': len(todo), 'parallel': True}
+    merged_lock = threading.Lock()
+    # 抢到之后用来叫停其他账号（和全局 _STOP 是两回事：
+    # 用户按「停止」要停全部，某个账号抢到只该停其余账号）
+    won = threading.Event()
+
+    def one_account(idx, a):
+        """单个账号的完整抢单流程，跑在自己的线程里。"""
+        name = a.get('name') or '?'
+        # 单个账号的停止条件：用户喊停 / 已经有人抢到且要求抢到即停
+        def acc_stop():
+            return stop() or (stop_on_first and won.is_set())
+
         log('')
         log('-' * 66)
-        log(f' [{i}/{len(todo)}] {a.get("name")}'
+        log(f' [{idx}/{len(todo)}] {name}'
             f'（学号 {a.get("username") or "-"}，ID {a.get("app_user_id") or "-"}）')
         log('-' * 66)
-        p = account_params(cfg, a['id'], params.get('_payload') or {})
-        p['submit'] = bool(params.get('submit', True))
-        if params.get('schedule'):
-            p['schedule'] = params['schedule']
-        r = b.run_booking(p, log=log, stop=stop)
+        try:
+            p = account_params(cfg, a['id'], params.get('_payload') or {})
+            p['submit'] = bool(params.get('submit', True))
+            if params.get('schedule'):
+                p['schedule'] = params['schedule']
+            r = b.run_booking(p, log=log, stop=acc_stop)
+        except Exception as e:
+            log(f'  [异常] {name}：{type(e).__name__}: {e}')
+            r = {'success': False, 'error': f'{type(e).__name__}: {e}'}
 
-        merged['runs'].append({
-            'id': a.get('id'), 'account': a.get('name'),
+        rec = {
+            'id': a.get('id'), 'account': name,
             'success': bool(r.get('success')),
             'error': r.get('error') or '',
             'booked': r.get('booked'),
-        })
-        # 无论如何都把最后一次的空场图带出来，前端好画
-        if r.get('matrix'):
-            merged['matrix'] = r['matrix']
-            merged['slots'] = r.get('slots')
-            merged['weekday'] = r.get('weekday')
-        if r.get('success'):
-            merged['success'] = True
-            merged['booked'] = r.get('booked')
-            merged['account'] = a.get('name')
-            merged['account_id'] = a.get('id')
-            log(f'\n✓✓ 账号「{a.get("name")}」抢到了，后面的账号不再尝试。')
-            return merged
-        if r.get('stop_reason') in ('auth_error', 'no_permission'):
-            log(f'  → 「{a.get("name")}」的 token 失效，跳过，换下一个账号。')
-    if not merged['success']:
+        }
+        with merged_lock:
+            merged['runs'].append(rec)
+            # 空场图：第一个带图的结果就留下（多个账号的图基本一样）
+            if r.get('matrix') and not merged.get('matrix'):
+                merged['matrix'] = r['matrix']
+                merged['slots'] = r.get('slots')
+                merged['weekday'] = r.get('weekday')
+            if r.get('success') and not merged['success']:
+                merged['success'] = True
+                merged['booked'] = r.get('booked')
+                merged['account'] = name
+                merged['account_id'] = a.get('id')
+                won.set()
+                log(f'\n✓✓ 账号「{name}」抢到了！')
+                if stop_on_first:
+                    log('   正在通知其他账号收手…')
+
+    threads = []
+    for i, a in enumerate(todo, 1):
+        t = threading.Thread(target=one_account, args=(i, a), daemon=True)
+        t.start()
+        threads.append(t)
+
+    # 等所有账号都结束（抢到即停时，其余线程会被 acc_stop 叫停，很快返回）
+    for t in threads:
+        t.join()
+
+    runs = merged['runs']
+    if merged['success']:
+        got = [r['account'] for r in runs if r['success']]
+        log(f'\n✓ 本次成交账号：{"、".join(got)}')
+        if stop_on_first and len(runs) < len(todo):
+            log(f'  （{len(todo) - len(runs)} 个账号因已抢到而未走到最后）')
+    else:
         merged['error'] = '全部账号都没抢到'
         log('\n△ 全部账号都试过了，没抢到，详见上方日志。')
     return merged
@@ -706,7 +755,12 @@ class Handler(BaseHTTPRequestHandler):
 
     def do_GET(self):
         path = urlparse(self.path).path
-        if path in ('/', '/index.html'):
+        if path == '/api/stop':
+            # 双保险：前端已改成 POST，但万一还有旧页面/手输地址走 GET，
+            # 这里也照停不误 —— 停止失效时用户只能干等，代价太大。
+            _STOP.set()
+            self._json({'ok': True})
+        elif path in ('/', '/index.html'):
             self._html(load_page())
         elif path == '/api/status':
             with _LOCK:
@@ -915,6 +969,9 @@ class Handler(BaseHTTPRequestHandler):
 
         # ---- 以下接口不占用「抢单任务」的互斥锁 ----
         if path == '/api/login':
+            # 【V4.1】无 UI 入口的备用登录：直接打 H5 登录接口拿 token，
+            # 不需要浏览器、不需要抓包、不需要证书，全程无人工介入。
+            # 保留它是因为「定时刷新 token」等无人值守场景需要一条纯 HTTP 的登录路径。
             username = (payload.get('username') or '').strip()
             password = payload.get('password') or ''
             login_type = (payload.get('loginType') or '01').strip()

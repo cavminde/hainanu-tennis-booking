@@ -201,17 +201,6 @@ def default_config():
     }
 
 
-def load_config(path):
-    cfg = default_config()
-    try:
-        if os.path.exists(path):
-            with open(path, encoding='utf-8') as f:
-                cfg.update(json.load(f) or {})
-    except Exception:
-        pass
-    return cfg
-
-
 # ---------------------------------------------------------------------------
 # 【需求6】随机源 —— 不用时间做种子
 # ---------------------------------------------------------------------------
@@ -406,10 +395,6 @@ def fmt_min(m):
 
 def weekday_cn_of(d):
     return WEEKDAY_CN[date_cls.fromisoformat(d).weekday()]
-
-
-def overlap(a_start, a_end, b_start, b_end):
-    return not (a_end <= b_start or b_end <= a_start)
 
 
 def build_headers(token):

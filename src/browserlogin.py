@@ -20,7 +20,6 @@
   勾了「信任此设备」之后，那个 cookie 和 CAS 会话会留在磁盘上，
   下次再登就直接带着 szblTK 跳回来，什么都不用点。
 """
-import base64 as _b64
 import os
 import re
 import shutil
@@ -28,12 +27,50 @@ import sys
 import threading
 import time
 
-# 【V3.1】与 booker.CAS_SERVICE 保持一致：service 必须带 base64url 回跳后缀，
-# 否则 MFA 通过后后端无处可跳，浏览器会停在 404 页上拿不到 token。
-_CAS_REDIRECT_B64 = _b64.urlsafe_b64encode(b'/user').decode('ascii').rstrip('=')
-CAS_URL = ('https://authserver.hainanu.edu.cn/authserver/login'
-           '?service=https://hdscs.hainanu.edu.cn/hdsc/app/' + _CAS_REDIRECT_B64)
-AUTH_ORIGIN = 'https://authserver.hainanu.edu.cn'
+import booker as _bk
+
+# 【V4.1 架构清理】CAS 地址的唯一真源收归 booker.py。
+#
+# 以前这里自己 base64 算一遍回跳后缀，booker.py 那边也各算一遍
+# （AUTH_BASE + CAS_LOGIN_PATH + CAS_APP_BASE + _b64url_path），
+# 两边拼出的是同一个 .../hdsc/app/L3VzZXI。平台一旦改回跳路径就得改两处，
+# 漏一处的症状是「浏览器能登进去，但服务端拿不到 token」——极难排查。
+# 现在统一从 booker 派生，只此一份。
+AUTH_ORIGIN = _bk.AUTH_BASE
+CAS_LOGIN_URL = _bk.AUTH_BASE + _bk.CAS_LOGIN_PATH
+CAS_SERVICE = _bk.CAS_SERVICE          # https://hdscs.hainanu.edu.cn/hdsc/app/L3VzZXI
+
+# 登录页（默认渲染扫码登录）
+CAS_URL = CAS_LOGIN_URL + '?service=' + CAS_SERVICE
+
+# 【V4.1】直跳「账号密码登录」的地址。
+# 页面上那个「账号登录」其实是个 <a id='userNameLogin_a'>，href 就是
+#   /authserver/login?type=userNameLogin&service=...
+# 实测：直接 goto 这个地址，CAS 会把账号密码表单渲染成**主表单** ——
+#   · #pwdFromId / #username / #password / #login_submit 天然可见（约 0.9s）
+#   · 隐藏字段 #cllt 直接就是 userNameLogin（不用我们再改）
+#   · 验证码 div 自带 hide（不用输验证码）
+#   · 页面上只剩 2 个 form，不再有 4 个同名 #username 的歧义
+# 而不带 type 打开时，#pwdLoginDiv 和 SECTION.main 两层 display:none 把表单
+# 藏得死死的，只能靠 FORCE_SHOW_JS 硬改样式 —— 那正是「要手动点切换、
+# 有时不自动填」的根源。
+CAS_PWD_URL = CAS_LOGIN_URL + '?type=userNameLogin&service=' + CAS_SERVICE
+
+# 【V4.1】「可以下手填表了」的判定：账号框和密码框都真的可见。
+# 顺带看验证码 —— 若验证码框冒出来了（连续输错后 CAS 会开），
+# 就不要自作主张提交，交回给人。
+JS_LOGIN_READY = """() => {
+  const g = s => document.querySelector(s);
+  const vis = e => !!e && !!(e.offsetWidth || e.offsetHeight
+                             || e.getClientRects().length);
+  const u = g('#pwdFromId #username');
+  const p = g('#pwdFromId #password');
+  const cp = g('#pwdFromId #captcha') || g('#captcha');
+  const cd = g('#captchaDiv');
+  const captchaOn = vis(cp) || (!!cd && !String(cd.className || '').includes('hide')
+                                && vis(cd));
+  return {ready: vis(u) && vis(p), captcha: captchaOn};
+}"""
 TOKEN_RE = re.compile(r'szblTK=([A-Za-z0-9._\-]{20,})')
 
 # 登录表单选择器。
@@ -41,13 +78,11 @@ TOKEN_RE = re.compile(r'szblTK=([A-Za-z0-9._\-]{20,})')
 # #username 和 #login_submit 都各有两个，所以必须限定在密码表单 #pwdFromId 作用域内，
 # 否则会填错表单、点错按钮。
 PWD_FORM = '#pwdFromId'
-SEL_PWD_DIV = '#pwdLoginDiv'
 SEL_USER = '#pwdFromId #username'
 SEL_PASS = '#pwdFromId #password'
 SEL_SUBMIT = '#pwdFromId #login_submit'
 SEL_SALT = '#pwdFromId #pwdEncryptSalt'
 SEL_CAPTCHA_DIV = '#pwdFromId #captchaDiv'
-SEL_CAPTCHA = '#pwdFromId #captcha'
 
 # 把「账号密码登录」整个区块连同所有祖先容器一起显示出来。
 # 只改 #pwdLoginDiv 自身没用 —— 祖先还藏着，输入框对 Playwright 来说依然
@@ -279,54 +314,6 @@ def reveal_pwd_form(page, log=print):
     except Exception as e:
         log(f'  × 展开登录区块失败：{str(e)[:80]}')
         return False
-
-
-def probe_page(log=print, timeout=40):
-    """只读探测：确认登录表单的选择器是否对得上。不填表、不提交。"""
-    if not HAS_PLAYWRIGHT:
-        return {'ok': False, 'error': f'Playwright 不可用：{_PW_ERR}'}
-    info = {}
-    try:
-        with sync_playwright() as pw:
-            b = _launch(pw, log, headless=True)
-            if b is None:
-                return {'ok': False, 'error': '无法启动任何浏览器'}
-            page = b.new_page(locale='zh-CN')
-            page.goto(CAS_URL, timeout=timeout * 1000, wait_until='domcontentloaded')
-            page.wait_for_timeout(1500)
-            info['url'] = page.url
-            info['title'] = page.title()
-
-            reveal_pwd_form(page, log)
-            page.wait_for_timeout(400)
-
-            for name, sel in (('username', SEL_USER), ('password', SEL_PASS),
-                              ('submit', SEL_SUBMIT), ('salt', SEL_SALT),
-                              ('form', PWD_FORM)):
-                try:
-                    loc = page.locator(sel).first
-                    info[name] = {'count': page.locator(sel).count(),
-                                  'visible': loc.is_visible()}
-                except Exception as e:
-                    info[name] = {'error': str(e)[:80]}
-            # 加密盐的值（16 位，用于 AES key）
-            try:
-                info['salt_value'] = page.eval_on_selector(
-                    SEL_SALT, "e => (e.value||'').slice(0,20)") if page.locator(
-                    SEL_SALT).count() else ''
-            except Exception:
-                info['salt_value'] = ''
-            # 验证码当前是否需要（hide 表示不用）
-            try:
-                info['captcha_needed'] = page.eval_on_selector(
-                    SEL_CAPTCHA_DIV, "e => !e.className.includes('hide')")
-            except Exception:
-                info['captcha_needed'] = False
-            b.close()
-    except Exception as e:
-        return {'ok': False, 'error': f'{type(e).__name__}: {e}'}
-    info['ok'] = True
-    return info
 
 
 def _cookies_for_playwright(cookiejar):
@@ -583,11 +570,13 @@ def _open_context(pw, log, profile_dir=None, headless=False):
     return ctx, b.close
 
 
-def _fill_and_submit(page, username, password, log):
+def _fill_and_submit(page, username, password, log, submit=True):
     """自动填学号密码并提交。密码仍由页面自己的 JS 加密，我们只做填表。
 
     注意：页面里 #username / #login_submit 各有多个同名元素（4 个表单并存），
     Playwright 严格模式下必须 .first，否则会报 strict mode violation。
+
+    submit=False 时只填不交（页面要求验证码时用）。
     """
     try:
         if not page.locator(SEL_USER).count():
@@ -596,8 +585,8 @@ def _fill_and_submit(page, username, password, log):
         # fill() 要求元素可见，给个短超时，卡住就立刻换脚本兜底，
         # 别让人对着空白的登录页干等 30 秒。
         try:
-            page.locator(SEL_USER).first.fill(username, timeout=6000)
-            page.locator(SEL_PASS).first.fill(password, timeout=6000)
+            page.locator(SEL_USER).first.fill(username, timeout=4000)
+            page.locator(SEL_PASS).first.fill(password, timeout=4000)
         except Exception:
             ok = page.evaluate(JS_SET_VALUES, [username, password])
             if not ok:
@@ -605,6 +594,8 @@ def _fill_and_submit(page, username, password, log):
                 return False
             log('  · 输入框仍不可见，已用脚本填入（加密照样由页面完成）')
         log('  ✓ 学号密码已自动填好')
+        if not submit:
+            return True          # 只要填，不提交（等用户补验证码）
         # 提交：走页面自己的加密 + 原生提交（见 JS_SUBMIT_LOGIN 的说明）
         try:
             r = page.evaluate(JS_SUBMIT_LOGIN, [username, password])
@@ -650,16 +641,107 @@ def _looks_like_mfa(page):
     return ('reAuth' in u) or ('multifactor' in u.lower())
 
 
+def _profile_has_session(profile_dir):
+    """档案里有没有留下过浏览器会话 —— 判断「信任此设备」是否可能生效。
+
+    全新档案（第一次登录）里不可能有信任 cookie，那就没必要等信任宽限期，
+    直接开填，省下那 2.5 秒。
+    """
+    try:
+        if not profile_dir or not os.path.isdir(profile_dir):
+            return False
+        # Cookies 的位置随 Chromium 版本/目录布局变：
+        #   老布局 <profile>/Cookies
+        #   新布局 <profile>/Default/Cookies 或 <profile>/Default/Network/Cookies
+        # 所以这里递归找，别硬编码路径（漏了就会把已信任的老档案当成新档案，
+        # 跳过宽限期 → 设备信任再也不生效）。
+        for root, dirs, files in os.walk(profile_dir):
+            dirs[:] = [d for d in dirs if d not in
+                       ('Cache', 'Code Cache', 'GPUCache', 'ShaderCache',
+                        'Crashpad', 'blob_storage')]
+            if 'Cookies' in files:
+                p = os.path.join(root, 'Cookies')
+                if os.path.getsize(p) > 0:
+                    return True
+            if len(root) > len(profile_dir) + 60:
+                break
+    except Exception:
+        pass
+    return False
+
+
+def _wait_before_fill(page, grace, log, stop, bucket):
+    """在「信任宽限期」内等免验证直通 —— 只等 grace 秒，不再盲等 10 秒。
+
+    【为什么改】旧实现是固定 wait_for_token(10 秒) 盲等：不管档案里有没有
+    「信任此设备」，都得先干等 10 秒才动手填表。实测一次登录 14.4 秒里
+    有 10 秒纯耗在这上面 —— 这就是「多账号登录很慢」的直接原因。
+
+    这里改成：只看两件事，谁先到走谁
+      · 网络层出现 szblTK        → 'token'（信任生效，直接收工）
+      · 页面已经离开 CAS 登录页  → 'left'（多半进了 MFA，交给 wait_for_token）
+    都没有 → 'timeout'，立刻自己动手填，不浪费时间。
+    """
+    deadline = time.time() + max(0.0, float(grace or 0))
+    while True:
+        if stop():
+            return 'stopped'
+        if bucket.get('token'):
+            return 'token'
+        if bucket.get('err_code'):
+            return 'err'
+        try:
+            u = page.url or ''
+        except Exception:
+            u = ''
+        if u and ('authserver' not in u or '/authserver/login' not in u):
+            return 'left'
+        if time.time() >= deadline:
+            return 'timeout'
+        page.wait_for_timeout(100)
+
+
+def _wait_form_ready(page, timeout, log):
+    """等账号密码框真正可见。返回 (可以下手吗, 'captcha' 或 None)。
+
+    'captcha' 表示页面把验证码放出来了 —— 这时候不能闷头提交，
+    得把学号密码填好、交回给用户补验证码。
+    """
+    deadline = time.time() + max(0.5, float(timeout or 5))
+    why = None
+    while time.time() < deadline:
+        try:
+            d = page.evaluate(JS_LOGIN_READY)
+        except Exception:
+            d = None
+        if d:
+            if d.get('ready'):
+                return True, None
+            if d.get('captcha'):
+                why = 'captcha'
+        page.wait_for_timeout(120)
+    return False, why
+
+
 def _persistent_login(username, password, profile_dir, timeout, log, stop,
-                      old_token=None):
+                      old_token=None, trust_grace=2.5, headless=False):
     """用固定档案走完整登录：能免验证就免验证，不能就自动填表 + 等你过 MFA。
 
     第一次：自动填学号密码 → 卡在 MFA → 你手动过一次（可以勾「信任此设备」）
     之后  ：档案里已有信任 cookie / CAS 会话 → 打开就直接带 szblTK 回来，零操作
+
+    【V4.1 提速】
+      ① 不再盲等 10 秒，只等 trust_grace 秒（默认 2.5s）看信任是否生效；
+      ② 需要自己登时，直跳 ?type=userNameLogin —— 账号密码表单天然可见，
+         不用再靠 JS 硬掰 display:none，也不用人工去点「账号登录」。
     """
+    # 注意：必须在**开浏览器之前**判断 —— Chromium 一启动就会把 Cookies
+    # 之类的文件写出来，事后再看永远是「有会话」。
+    fresh_profile = not _profile_has_session(profile_dir)
     try:
         with sync_playwright() as pw:
-            ctx, closer = _open_context(pw, log, profile_dir=profile_dir)
+            ctx, closer = _open_context(pw, log, profile_dir=profile_dir,
+                                        headless=headless)
             if ctx is None:
                 return None, '无法启动浏览器（需要系统装有 Edge 或 Chrome）'
             try:
@@ -674,23 +756,50 @@ def _persistent_login(username, password, profile_dir, timeout, log, stop,
                     page.goto(CAS_URL, timeout=60000, wait_until='domcontentloaded')
                 except Exception as e:
                     return None, f'打开认证页失败：{str(e)[:70]}'
-                page.wait_for_timeout(1200)
 
-                # ① 先安静地等几秒：档案里若是「已信任设备」，会自己带 token 跳回来
-                #    这里要把上一次的旧 token 排除掉，否则拿回来的还是那个失效的
-                tok, _ = wait_for_token(page, 10, log, stop, bucket=bucket,
-                                        quiet=True, exclude=old_token)
-                if tok:
+                # ① 只等很短的一小会儿（默认 2.5s）看「信任此设备」有没有生效。
+                #    以前这里是死等 10 秒 —— 不管能不能免验证都先干等，
+                #    实测一次登录 14.4 秒里有 10 秒纯耗在这上面。
+                # 全新档案 → 不可能有信任 cookie，宽限期直接给 0，开填就完事
+                grace = 0.0 if fresh_profile else float(trust_grace or 0)
+                st = _wait_before_fill(page, grace, log, stop, bucket)
+                if st == 'stopped':
+                    return None, '已中止'
+                if st == 'token':
                     log('  ✓ 设备信任生效，本次免验证直接拿到 token')
-                    return tok, None
+                    return bucket['token'], None
+                if st == 'err':
+                    code = bucket.get('err_code')
+                    return None, (f'平台返回错误码 {code}（1401/1402）：学号可能'
+                                  '尚未绑定订场平台账号。请先在微信里正常进一次'
+                                  '小程序再回来重试。')
+                if st == 'left':
+                    # 已经离开登录页（多半直接进了 MFA），交给 wait_for_token 收尾
+                    return wait_for_token(page, timeout, log, stop,
+                                          bucket=bucket, exclude=old_token)
                 if stop():
                     return None, '已中止'
 
-                # ② 没能直接过 → 自动填学号密码提交
+                # ② 没能免验证 → 直跳「账号密码登录」，表单天然可见，
+                #    不用再硬改样式，也不用人工去点「账号登录」。
                 if username and password:
-                    reveal_pwd_form(page, log)
-                    page.wait_for_timeout(400)
-                    if not _fill_and_submit(page, username, password, log):
+                    try:
+                        page.goto(CAS_PWD_URL, timeout=30000,
+                                  wait_until='domcontentloaded')
+                    except Exception as e:
+                        log(f'  ! 跳转账号密码登录页失败（{str(e)[:60]}），就地展开')
+                    ok, why = _wait_form_ready(page, 8, log)
+                    if not ok and why != 'captcha':
+                        # 兜底：万一以后 CAS 改版、type 参数失效，
+                        # 退回老办法把隐藏的容器硬掰开。
+                        reveal_pwd_form(page, log)
+                        page.wait_for_timeout(300)
+                    if why == 'captcha':
+                        log('  ! 页面要求输入验证码 —— 学号密码已填好，'
+                            '请你补一下验证码再点登录')
+                        _fill_and_submit(page, username, password, log,
+                                         submit=False)
+                    elif not _fill_and_submit(page, username, password, log):
                         log('  → 请在浏览器里手动输入学号密码')
                 else:
                     log('  → 请在浏览器里手动输入学号密码')
@@ -733,6 +842,11 @@ def browser_mfa(mfa_url, cookiejar=None, timeout=300, log=print, stop=None,
 
     不绕过 MFA：学号密码已由服务端验证通过，这里只是把「扫码 / 收短信」
     这一步用真实浏览器呈现出来，用户在里面点完，我们收 token。
+
+    【V4.1 状态标注】当前主流程已不走这里 —— CAS 登录统一走
+    `_persistent_login()` 直跳账号密码页（CAS_PWD_URL）全自动填表。
+    本函数及 `api_cas_login()` 保留为「服务端直登被风控 / 需要人工过 MFA」
+    时的降级通道，删除会导致该兜底失效。
     """
     if not HAS_PLAYWRIGHT:
         return None, f'未装 Playwright：{_PW_ERR}'
@@ -783,7 +897,8 @@ def browser_mfa(mfa_url, cookiejar=None, timeout=300, log=print, stop=None,
 
 def browser_login(username, password, timeout=300, log=print,
                   stop=None, mfa_hint=None, cas_session=None, mfa_url=None,
-                  profile_dir=None, old_token=None):
+                  profile_dir=None, old_token=None, trust_grace=2.5,
+                  headless=False):
     """完整登录：先在服务端过学号密码，MFA 交给浏览器里的人。
 
     优先复用调用方传进来的 CAS 会话（cas_session / mfa_url），
@@ -798,7 +913,9 @@ def browser_login(username, password, timeout=300, log=print,
     if profile_dir:
         log('[1/3] 使用固定浏览器档案（上次勾的「信任此设备」还在）…')
         tok, err = _persistent_login(username, password, profile_dir,
-                                     timeout, log, stop, old_token=old_token)
+                                     timeout, log, stop, old_token=old_token,
+                                     trust_grace=trust_grace,
+                                     headless=headless)
         if tok:
             log('[3/3] ✓ 完成')
         return tok, err

@@ -315,14 +315,19 @@ details summary:hover{color:var(--accent)}
       <div><label>用哪个账号抢</label>
         <select id="scope">
           <option value="current">只用当前标签页的账号</option>
-          <option value="all">全部账号依次尝试（抢到一个即停）</option>
+          <option value="all">全部账号并行开抢（各自按自己的时间窗口）</option>
         </select></div>
-      <div><label>放号时刻（固定 8:00）</label>
-        <input type="text" id="sched" value="08:00:00" readonly
-               style="color:var(--dim);cursor:default"
-               title="学校每天 8:00 放号，已经写死，不用改"></div>
+      <!-- 放号时刻固定 8:00，界面上不再显示（V4.1），用隐藏字段把值带过去 -->
+      <input type="hidden" id="sched" value="08:00:00">
       <div style="flex:0 0 140px"><label>&nbsp;</label>
         <button class="pri" id="goSched" style="width:100%">⏰ 8:00 自动抢</button></div>
+    </div>
+    <div class="row" id="stopFirstRow" style="margin-bottom:10px;display:none">
+      <div><label>抢到之后</label>
+        <select id="stopFirst">
+          <option value="1">抢到一个就全体停手（不占多个场）</option>
+          <option value="0">各抢各的，互不影响（不同时间窗口用这个）</option>
+        </select></div>
     </div>
     <div class="hint" id="schedHint" style="margin:-4px 0 8px">
       两个按钮，两个用法：<b>⚡ 现在就抢</b> = 立刻发出去（下午看到有空场就用它）；
@@ -339,8 +344,9 @@ details summary:hover{color:var(--accent)}
       <span id="stat" style="font-size:12px;color:var(--dim)">空闲</span>
       <span class="badge" id="scopeBadge">当前账号：--</span>
     </div>
-    <div class="hint">选「全部账号依次」时，会按账号表从上到下的顺序，
-      一个号跑完没抢到就换下一个；<b>任何一个号抢到就立刻停手</b>，不会重复扣费。</div>
+    <div class="hint">选「全部账号并行」时，<b>所有账号在同一时刻各自开火</b>，
+      各用各的 token、时间窗口和场地顺序，互不等待。默认抢到一个就全体收手，
+      避免占下多个场地；如果你的账号各抢不同时间段，把上面改成「各抢各的」。</div>
   </div>
 
   <!-- 空场图 -->
@@ -663,6 +669,7 @@ function globals(){
     refresh_rounds: parseInt($('refresh').value)||0,
     not_open_max_retries: parseInt($('notopen').value)||120,
     schedule: $('sched').value.trim(),
+    stop_on_first: $('stopFirst').value === '1',
     one_per_day: true,
   };
 }
@@ -694,7 +701,10 @@ function apply(c){
   $('workers').value= c.scout_workers ?? 14;
   $('refresh').value= c.refresh_rounds ?? 0;
   $('notopen').value= c.not_open_max_retries ?? 120;
-  $('sched').value  = c.schedule || '07:59:58';
+  // 放号时刻固定 8:00（V4.1）：不再从配置回填，避免老配置里的 07:59:58 复活
+  $('sched').value  = '08:00:00';
+  $('stopFirst').value = (c.stop_on_first === false) ? '0' : '1';
+  $('stopFirstRow').style.display = $('scope').value==='all' ? '' : 'none';
   renderAll();
 }
 function renderAll(){
@@ -1132,7 +1142,12 @@ $('goSched').onclick = ()=>{
 };
 $('bench').onclick   = ()=>start('/api/bench');
 $('diag').onclick    = ()=>start('/api/diagnose');
-$('stop').onclick    = async()=>{ await api('/api/stop'); toast('已发送停止信号'); };
+// 注意：必须传 body（哪怕是个空对象），否则 api() 会退化成 GET，
+// 而服务端 /api/stop 原本只在 do_POST 里处理 —— GET 会 404，停止就永远不生效。
+$('stop').onclick    = async()=>{
+  await api('/api/stop', {});
+  toast('已发送停止信号');
+};
 $('save').onclick    = async()=>{ await api('/api/config', collectCfg()); toast('配置已保存'); };
 $('resalt').onclick  = async()=>{
   const r = await api('/api/salt',{passphrase:$('passphrase').value.trim()});
@@ -1142,7 +1157,7 @@ $('antiSw').onclick  = ()=>{ $('antiSw').classList.toggle('on'); scheduleSave();
 $('passphrase').oninput = loadFp;
 $('passphrase').onchange = ()=>{ loadFp(); scheduleSave(); };
 ['minInt','jitter'].forEach(id=>$(id).oninput=updQps);
-['minInt','jitter','burst','parFirst','workers','refresh','notopen','sched','date'].forEach(id=>{
+['minInt','jitter','burst','parFirst','workers','refresh','notopen','sched','date','stopFirst'].forEach(id=>{
   $(id).addEventListener('change', scheduleSave);
 });
 $('wstart').onchange = ()=>{ pullToAcc(); scheduleSave(); };
@@ -1150,8 +1165,11 @@ $('wend').onchange   = ()=>{ pullToAcc(); scheduleSave(); };
 $('strategy').onchange = ()=>{ pullToAcc(); scheduleSave(); };
 $('luser').oninput   = updLoginTarget;
 $('scope').onchange  = ()=>{
-  $('scopeBadge').textContent = $('scope').value==='all'
-    ? '全部账号依次' : '当前账号：'+((curAcc()&&curAcc().name)||'--');
+  const all = $('scope').value==='all';
+  $('scopeBadge').textContent = all
+    ? '全部账号并行' : '当前账号：'+((curAcc()&&curAcc().name)||'--');
+  // 「抢到之后」只在多账号并行时才有意义
+  $('stopFirstRow').style.display = all ? '' : 'none';
 };
 document.querySelectorAll('.chip[data-w]').forEach(c=>c.onclick=()=>{
   const [a,b]=c.dataset.w.split('-');
