@@ -799,14 +799,19 @@ check(len(_captured3) == 1 and _captured3[0].get('_account_id') == 'acc_b',
 print('\n[19] V4.4 日期完全手动：auto_roll 拆除 + 日期预检 + 空场计数')
 check(not hasattr(S, 'roll_target_date'),
       'roll_target_date 已删除（不再静默改写目标日期）')
-_ok, _msg = S.date_precheck(date.today().isoformat(), 2)
-check(_ok, '今天合法')
-_ok, _msg = S.date_precheck((date.today() + timedelta(days=2)).isoformat(), 2)
-check(_ok, '今天 + 2 天合法（窗口内）')
-_ok, _msg = S.date_precheck((date.today() - timedelta(days=1)).isoformat(), 2)
+# 用「今天正午」当参考时刻，让结果与自检跑在几点无关
+_noon = datetime.combine(date.today(), datetime.min.time()) + timedelta(hours=12)
+_ok, _msg = S.date_precheck(date.today().isoformat(), 2, at=_noon)
+check(_ok, '今天合法（正午，早已过放号时刻）')
+_ok, _msg = S.date_precheck((date.today() + timedelta(days=2)).isoformat(), 2,
+                            at=_noon)
+check(_ok, '今天 + 2 天合法（正午：它就是今天早上刚放号的那一场）')
+_ok, _msg = S.date_precheck((date.today() - timedelta(days=1)).isoformat(), 2,
+                            at=_noon)
 check(not _ok and '过去' in _msg, '昨天被拒绝', _msg)
-_ok, _msg = S.date_precheck((date.today() + timedelta(days=3)).isoformat(), 2)
-check(not _ok and '超出' in _msg, '今天 + 3 天超出窗口被拒绝', _msg)
+_ok, _msg = S.date_precheck((date.today() + timedelta(days=3)).isoformat(), 2,
+                            at=_noon)
+check(not _ok and '放号' in _msg, '今天 + 3 天被拒绝（那一刻还没放号）', _msg)
 _ok, _msg = S.date_precheck('', 2)
 check(not _ok, '空日期被拒绝')
 _mx18 = b.build_matrix(
@@ -819,6 +824,56 @@ _free18 = S.count_free_cells(_mx18)
 check(len(_free18) == 7, f'空场计数正确（实际 {len(_free18)}）')
 check(('1号场', '19:00-20:00') in _free18,
       '被占的 18-19 不在可订明细里，19-20 在')
+
+print('\n[20] V4.4 修订：按「放号周期」判断日期（今晚挂机订 30 号这个典型场景）')
+# 用户 2026-09-27 晚提出：27 号晚上 23 点挂机、明早 08:00 开火抢 30 号，
+# 老逻辑按「现在」算窗口 → 30 号被判成"超出 3 天"直接拒绝。
+# 真实规则：每天 08:00 放出「今天 + 2 天」那一场，
+# 所以 27 号 23:00 与 28 号 08:00 之前属于同一个放号周期；
+# 30 号的放号时刻正是 28 号 08:00 —— 判断必须按开火时刻算。
+_MAXA = 2
+_2723 = datetime(2026, 9, 27, 23, 0)      # 27 日 23:00（今晚挂机）
+_2808 = datetime(2026, 9, 28, 8, 0)       # 28 日 08:00（明早开火）
+_D29 = '2026-09-29'
+_D30 = '2026-09-30'
+
+check(S.release_moment(_D30, _MAXA) == _2808, '30 号的放号时刻 = 09-28 08:00')
+check(S.release_moment(_D29, _MAXA) == datetime(2026, 9, 27, 8, 0),
+      '29 号的放号时刻 = 09-27 08:00')
+
+_st, _m = S.date_status(_D30, _MAXA, at=_2723)
+check(_st == 'not_released', '今晚 23:00 看 30 号：还没放号', _m)
+_ok, _m = S.date_precheck(_D30, _MAXA, at=_2723)
+check(not _ok, '今晚「现在就抢」订 30 号 → 拒绝（那一刻确实还不能订）')
+
+_ok, _m = S.date_precheck(_D30, _MAXA, at=_2808)
+check(_ok, '明早 08:00 开火订 30 号 → 合法（原来被误判成"超出 3 天"）', _m)
+_st, _m = S.date_status(_D29, _MAXA, at=_2808)
+check(_st == 'ok', '明早 08:00 看 29 号：仍可订（在窗口内）')
+
+_ok, _m = S.date_precheck('2026-09-26', _MAXA, at=_2723)
+check(not _ok and '过去' in _m, '已过去的日期仍被拒绝')
+_ok, _m = S.date_precheck('2026-10-02', _MAXA, at=_2808)
+check(not _ok and '放号' in _m, '连开火时刻都没放号的日期被拒绝', _m)
+
+# 空场检查：还没放号的日期不该去做无意义的查询
+_rc20 = S.read_config
+_rn20 = S.acc.runnable
+try:
+    S.read_config = lambda: {'max_days_ahead': _MAXA, 'accounts': []}
+    S.acc.runnable = lambda cfg: []
+    _logs20 = []
+    _rep20 = S.report_free_courts(_D30, _logs20.append, label='测试', at=_2723)
+finally:
+    S.read_config = _rc20
+    S.acc.runnable = _rn20
+check(isinstance(_rep20, dict) and _rep20.get('status') == 'not_released',
+      '未放号的日期：空场检查直接给出放号时间，不去做无意义的查询')
+check(any('放号' in l for l in _logs20), '日志明确说明「还没放号」')
+
+_lo, _hi = S.date_window(_2723, _MAXA)
+check(_lo.isoformat() == '2026-09-27' and _hi.isoformat() == '2026-09-29',
+      '可预约区间 = 今天 ~ 今天 + 2')
 
 print('\n' + '=' * 50)
 if FAIL:

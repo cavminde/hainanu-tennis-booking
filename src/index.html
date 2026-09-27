@@ -173,7 +173,8 @@ details summary:hover{color:var(--accent)}
         <h2>凭证与目标 · 账号库</h2>
         <label>目标日期（所有账号共用，完全手动，不会自动改）</label>
         <input type="date" id="date">
-        <div class="hint" id="freeHint" style="margin-top:6px">填好日期后，「刷新 token」或开抢时会自动报出当天还剩几片空场。</div>
+        <div class="hint" id="winHint" style="margin-top:6px"></div>
+        <div class="hint" id="freeHint">填好日期后，「刷新 token」或开抢时会自动报出当天还剩几片空场。</div>
 
         <label style="margin-top:12px">已保存的账号（一行一个）</label>
         <table class="acct">
@@ -978,12 +979,20 @@ async function poll(){
     }
     /* 【V4.4】刷新 token / 重取 token 后，把「目标日期还剩几片空场」显示到日期框下面 */
     if(s.result && s.result.free_report){
-      const fr = s.result.free_report;
-      const el = $('freeHint');
+      const fr = s.result.free_report, el = $('freeHint');
       if(el && fr){
-        el.innerHTML = fr.count > 0
-          ? `目标日期 <b>${fr.date}（${fr.weekday}）</b> ｜ 当天可订空场 <b style="color:#4ade80">${fr.count}</b> 个`
-          : `目标日期 <b>${fr.date}（${fr.weekday}）</b> ｜ <b style="color:#f87171">当天已无可订场次</b> —— 日期可能已过时，建议换一天`;
+        const w = fr.window ? `　（可预约区间 ${fr.window[0].slice(5)} ~ ${fr.window[1].slice(5)}）` : '';
+        if(fr.status === 'not_released'){
+          el.innerHTML = `目标日期 <b>${fr.date}</b> ｜ <b style="color:#fbbf24">还没放号</b>`
+            + ` —— 要等 <b>${fr.release_at||''}</b> 才开放${w}`;
+        } else if(fr.status === 'expired'){
+          el.innerHTML = `目标日期 <b>${fr.date}</b> ｜ <b style="color:#f87171">已经过去</b> —— 请改日期${w}`;
+        } else if(fr.count > 0){
+          el.innerHTML = `目标日期 <b>${fr.date}（${fr.weekday}）</b> ｜ 当天可订空场 <b style="color:#4ade80">${fr.count}</b> 个${w}`;
+        } else {
+          el.innerHTML = `目标日期 <b>${fr.date}（${fr.weekday}）</b> ｜ <b style="color:#f87171">一片不剩</b>`
+            + ` —— 已放号但被抢光了，建议换一天${w}`;
+        }
       }
     }
     if(s.result) renderResult(s.result);
@@ -1394,6 +1403,17 @@ $('date').addEventListener('change', ()=>{
   const h=$('freeHint');
   if(h) h.textContent='日期已改，空场数会在下次「刷新 token」或开抢时重新报告。';
 });
+/* 【V4.4】把「当前可预约区间」摆在日期框上面 —— 每天 08:00 放号、跨零点前移，
+   让人一眼看出今晚挂机该填哪一天 */
+function updWindowHint(){
+  const el=$('winHint'); if(!el) return;
+  const p=n=>String(n).padStart(2,'0'), md=d=>p(d.getMonth()+1)+'-'+p(d.getDate());
+  const t=new Date(), f=new Date(t); f.setDate(f.getDate()+2);
+  el.innerHTML = `可预约区间：<b>${md(t)} ~ ${md(f)}</b>`
+    + '<span style="color:var(--dim)">　跨零点前移；每天 08:00 放出其中最新的一天</span>';
+}
+updWindowHint();
+setInterval(updWindowHint, 60000);   // 挂着过夜也能自己刷新区间
 $('wstart').onchange = ()=>{ pullToAcc(); scheduleSave(); };
 $('wend').onchange   = ()=>{ pullToAcc(); scheduleSave(); };
 $('strategy').onchange = ()=>{ pullToAcc(); scheduleSave(); };

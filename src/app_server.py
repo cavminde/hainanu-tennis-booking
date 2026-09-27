@@ -426,27 +426,79 @@ def refresh_all_accounts(cfg, target, log, stop):
     return ok_n, len(todo)
 
 
-def date_precheck(d, max_days_ahead):
-    """目标日期合法性检查。返回 (ok, msg)；ok=False 时 msg 是给人看的原因。
+# 【V4.4 修订 · 放号周期】每天 08:00 放出「今天 + 可提前天数」那一场：
+#   27 日 08:00 放 29 号，28 日 08:00 放 30 号。
+# 所以「今天晚上 23 点」和「明天早上 8 点之前」确实是同一个放号周期 ——
+# 这个周期内最新放出的是 29 号，30 号要等 28 日 08:00。
+# 结论：判断日期必须按**请求真正发出的那一刻**算，不能一律按「现在」。
+# 定时任务挂机过夜时这两个时刻差一整天，用「现在」判断就会把
+# 「明早 8 点合法的目标日期」误判成「超出 3 天」。
+RELEASE_HMS = (8, 0, 0)
 
-    【V4.4】「目标日期自动跟随（auto_roll_date）」已拆除：日期完全由用户
-    手动填，程序只负责核对并在不合法时明确拒绝，绝不静默改写。
+
+def release_moment(d, max_days_ahead=2, hms=RELEASE_HMS):
+    """某一天的放号时刻 =（那天 − 可提前天数）那天的 08:00。解析不了返回 None。"""
+    try:
+        day = date_cls.fromisoformat((d or '').strip())
+    except Exception:
+        return None
+    h, m, s = hms
+    start = day - timedelta(days=int(max_days_ahead or 2))
+    return datetime(start.year, start.month, start.day, h, m, s)
+
+
+def date_window(at=None, max_days_ahead=2):
+    """参考时刻所在放号周期的可预约区间（最早, 最晚）。"""
+    today = (at or datetime.now()).date()
+    return today, today + timedelta(days=int(max_days_ahead or 2))
+
+
+def date_status(d, max_days_ahead=2, at=None):
+    """目标日期的状态，返回 (status, msg)。
+
+    status: empty(没填) / bad(格式错) / expired(已过去) /
+            not_released(还没放号) / ok(可以订)
     """
+    at = at or datetime.now()
     d = (d or '').strip()
     if not d:
-        return False, '还没填目标日期（界面上方的「目标日期」），先填一下。'
+        return 'empty', '还没填目标日期'
+    rm = release_moment(d, max_days_ahead)
+    if rm is None:
+        return 'bad', f'目标日期格式无法解析：{d}'
     try:
-        ahead = (date_cls.fromisoformat(d) - date_cls.today()).days
+        day = date_cls.fromisoformat(d)
     except Exception:
-        return False, f'目标日期格式无法解析：{d}'
-    if ahead < 0:
-        return False, (f'目标日期 {d} 已过去 {-ahead} 天。'
-                       f'请改成可预约窗口内的日期'
-                       f'（今天起最多提前 {int(max_days_ahead or 2)} 天）。')
-    if ahead > int(max_days_ahead or 2):
-        return False, (f'目标日期 {d} 距今 {ahead} 天，超出可预约窗口'
-                       f'（最多提前 {int(max_days_ahead or 2)} 天），请改近一点。')
-    return True, ''
+        return 'bad', f'目标日期格式无法解析：{d}'
+    if day < at.date():
+        return 'expired', f'目标日期 {d} 已经过去 {(at.date() - day).days} 天'
+    if at < rm:
+        return ('not_released',
+                f'目标日期 {d} 还没放号 —— 要等到 '
+                f'{rm.strftime("%m-%d %H:%M")} 才开放'
+                f'（每天 08:00 放出「今天 + {int(max_days_ahead or 2)} 天」那一场）')
+    return 'ok', ''
+
+
+def date_precheck(d, max_days_ahead, at=None):
+    """目标日期合法性检查：按**请求真正发出的时刻** at 判断。
+
+    立即抢 → at = 现在；定时抢 → at = 开火时刻（比如明早 08:00）。
+    【V4.4】「目标日期自动跟随（auto_roll_date）」已拆除：日期完全由用户
+    手动填，程序只负责核对并在不合法时明确拒绝，绝不静默改写。
+    返回 (ok, msg)；ok=False 时 msg 是给人看的原因。
+    """
+    st, msg = date_status(d, max_days_ahead, at=at)
+    if st == 'ok':
+        return True, ''
+    if st == 'empty':
+        return False, '还没填目标日期（界面上方的「目标日期」），先填一下。'
+    if st == 'expired':
+        return False, msg + '，请改成还没过去的日期。'
+    if st == 'not_released':
+        return False, (msg + '。本次开抢那一刻它还不能订 —— '
+                       '要么把日期改近一点，要么等过了放号时刻再挂机。')
+    return False, msg
 
 
 def count_free_cells(matrix):
@@ -455,21 +507,42 @@ def count_free_cells(matrix):
             for slot, st in (row or {}).items() if st == 'open']
 
 
-def report_free_courts(target_date, log, label='空场检查'):
+def report_free_courts(target_date, log, label='空场检查', at=None):
     """查一次目标日期的空场并汇报：日期 + 还剩几个可订 + 明细（只读，不占额度）。
 
     【V4.4】替代「目标日期自动跟随」：不替你改日期，只把真实情况报给你。
-    返回 dict（含 count / free 明细，给前端提示条用）；查不了 / 没设日期返回 None。
+    返回 dict，status 有四种：
+      ok           正常查到，count = 可订空场数（0 也用它，见 sold_out）
+      sold_out     已放号但一片不剩
+      not_released 还没放号（这时去查是白查，只给放号时间）
+      expired      日期已过去
+    查不了（没设日期 / 日期格式错 / 没可用账号 / token 失效）返回 None。
     """
+    at = at or datetime.now()
+    cfg = read_config()
+    max_ahead = int(cfg.get('max_days_ahead') or 2)
     d = (target_date or '').strip()
     if not d:
         log(f'[{label}] 还没设目标日期，先不查空场。')
         return None
-    ok_d, why_d = date_precheck(d, read_config().get('max_days_ahead'))
-    if not ok_d:
-        log(f'[{label}] {why_d}')
+    lo, hi = date_window(at, max_ahead)
+    win = [lo.isoformat(), hi.isoformat()]
+    st, msg = date_status(d, max_ahead, at=at)
+    if st == 'bad':
+        log(f'[{label}] {msg}')
         return None
-    pool = acc.runnable(read_config())
+    if st == 'expired':
+        log(f'[{label}] {msg} —— 请改成还没过去的日期。')
+        return {'date': d, 'status': 'expired', 'msg': msg, 'window': win}
+    if st == 'not_released':
+        # 这时候去查是白查：getDay 只会回答"还没开放"，
+        # 把它说成"已被抢光"会误导人。明确告诉什么时候放号。
+        log(f'[{label}] {msg}')
+        log(f'   现在可预约区间：{lo} ~ {hi}（跨零点后整体前移一天）')
+        return {'date': d, 'status': 'not_released', 'msg': msg,
+                'release_at': release_moment(d, max_ahead).strftime('%m-%d %H:%M'),
+                'window': win}
+    pool = acc.runnable(cfg)
     if not pool:
         log(f'[{label}] 没有可用账号（启用 + 未关场 + 有 token），无法查询空场。')
         return None
@@ -501,8 +574,9 @@ def report_free_courts(target_date, log, label='空场检查'):
     if len(free) > 8:
         log(f'    … 另有 {len(free) - 8} 个')
     if not free:
-        log('    ⚠ 该日期已无可订场次 —— 很可能日期过时 / 已被抢光，建议换一天。')
+        log('    ⚠ 该日期已放号，但一片不剩 —— 已被抢光，建议换一天。')
     return {'date': d, 'weekday': weekday, 'count': len(free),
+            'status': 'ok' if free else 'sold_out', 'window': win,
             'free': [{'court': n, 'slot': s} for n, s in free]}
 
 
@@ -1722,7 +1796,9 @@ class Handler(BaseHTTPRequestHandler):
             p['submit'] = True
             p['schedule'] = None
             p['_fire_mode'] = 'now'          # 【V4.4】立即模式护栏标记
-            # 【V4.4】日期不合法直接拒绝启动（日期完全手动，绝不静默改）
+            # 【V4.4】日期不合法直接拒绝启动（日期完全手动，绝不静默改）。
+            # 立即抢就是"现在这一秒"发请求 → 按「现在」判断窗口。
+
             ok_d, why_d = date_precheck(p.get('target_date'),
                                         p.get('max_days_ahead'))
             if not ok_d:
@@ -1749,9 +1825,12 @@ class Handler(BaseHTTPRequestHandler):
             if not p['schedule']:
                 self._json({'ok': False, 'msg': '定时时间格式不对'})
                 return
-            # 【V4.4】日期不合法直接拒绝启动
+            # 【V4.4 修订】日期按**开火时刻**判断，而不是按"现在"：
+            # 今晚 23 点挂机、明早 08:00 才开火，那时窗口已经前移一天 ——
+            # 「今天（27 号）看是超出 3 天」的 30 号，明早恰好是最新的放号日。
+            fire_at = scheduled_target(p['schedule']) or datetime.now()
             ok_d, why_d = date_precheck(p.get('target_date'),
-                                        p.get('max_days_ahead'))
+                                        p.get('max_days_ahead'), at=fire_at)
             if not ok_d:
                 self._json({'ok': False, 'msg': why_d})
                 return
