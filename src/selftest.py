@@ -304,17 +304,19 @@ check(v.get('has_password') is True, 'view() 带出 has_password 标记')
 
 # ---- 新全局参数进了默认配置、也进了迁移白名单（否则「UI 能设、存不住」）----
 dc = A.default_config()
-for k in ('auto_refresh_token', 'refresh_lead_min', 'refresh_timeout',
-          'auto_roll_date'):
+for k in ('auto_refresh_token', 'refresh_lead_min', 'refresh_timeout'):
     check(k in dc, f'默认配置里有 {k}')
 check(dc['refresh_lead_min'] == 15, '默认提前 15 分钟刷新')
 check(dc['auto_refresh_token'] is True, '默认开启自动刷新')
+check('auto_roll_date' not in dc,
+      '【V4.4】默认配置已不含 auto_roll_date（目标日期自动跟随已拆，日期完全手动）')
 mig = A.migrate({'auto_refresh_token': False, 'refresh_lead_min': 30,
                  'refresh_timeout': 600, 'auto_roll_date': False})
 check(mig['auto_refresh_token'] is False, '迁移：auto_refresh_token 存得住')
 check(mig['refresh_lead_min'] == 30, '迁移：refresh_lead_min 存得住')
 check(mig['refresh_timeout'] == 600, '迁移：refresh_timeout 存得住')
-check(mig['auto_roll_date'] is False, '迁移：auto_roll_date 存得住')
+check('auto_roll_date' not in mig,
+      '【V4.4】迁移白名单已剔除 auto_roll_date（旧配置里残留的也被丢弃）')
 
 print('\n[10] V4.2 安全护栏（会扣钱的坑，全部锁死）')
 from datetime import date, datetime, timedelta
@@ -366,7 +368,7 @@ _ui_keys = ('min_interval', 'jitter_ms', 'burst', 'parallel_first',
             'scout_workers', 'refresh_rounds', 'not_open_max_retries',
             'schedule', 'stop_on_first', 'one_per_day', 'anti_collision',
             'passphrase', 'auto_refresh_token', 'refresh_lead_min',
-            'refresh_timeout', 'auto_roll_date', 'target_date')
+            'refresh_timeout', 'target_date')
 for _k in _ui_keys:
     check(_k in A.default_config(), f'默认配置含界面可设键 {_k}')
 
@@ -718,6 +720,105 @@ if isinstance(_cres, dict):
     check(_gate_log, '关场账号的日志明确说明已「一键关场」并跳过')
 else:
     check(False, '关场账号 run_booking 应返回 dict')
+
+print('\n[18] V4.4 「立即抢单」不再被配置里的定时串污染（2026-09-27 实测 bug 回归）')
+# 事故回放：「现在就抢（全部账号）」走 run_multi，每个账号的参数由
+# account_params(cfg, id, payload) 重建 —— config / payload 里的
+# schedule='08:00:00' 被一起捞回来；而原来的
+# `if params.get('schedule'): p['schedule'] = params['schedule']`
+# 对 None 跳过覆盖，于是「立即抢」被污染成「死等到次日 07:59:58」
+# （实证：dist/logs/run_20260927_081705.log）。
+
+# —— 护栏：booker.resolve_schedule 在立即模式下清掉复活的定时串 ——
+_logs18 = []
+check(b.resolve_schedule({'_fire_mode': 'now', 'schedule': '08:00:00'},
+                         log=_logs18.append) is None,
+      '立即模式（_fire_mode=now）带定时串 → 被护栏清成 None')
+check(any('护栏' in l for l in _logs18), '护栏触发时日志有明确告警')
+check(b.resolve_schedule({'_fire_mode': 'sched', 'schedule': (8, 0, 0)}) == (8, 0, 0),
+      '定时模式 schedule 原样透传')
+check(b.resolve_schedule({'schedule': None}) is None, '没给 schedule → None（立即）')
+
+# —— 根因修复：run_multi 无条件覆盖 schedule（None 也必须盖过去）——
+_cfg18 = A.default_config()
+_cfg18['schedule'] = '08:00:00'        # 老配置里都留着这个串
+_a18 = A.default_account(_cfg18, name='测试号')
+_a18['token'] = 'eyJhbGciOiJIUzUxMiJ9.fake.fake'
+_a18['court_enabled'] = {c['name']: True for c in b.COURTS_FALLBACK}
+_cfg18['accounts'] = [_a18]
+
+_real_read_config = S.read_config
+_real_run_booking = S.b.run_booking
+_captured = []
+try:
+    S.read_config = lambda: dict(_cfg18)
+    S.b.run_booking = lambda p, log=None, stop=None: (
+        _captured.append(p) or {'success': False})
+    S.run_multi({'schedule': None, 'submit': True, '_payload': {}}, lambda: False)
+finally:
+    S.read_config = _real_read_config
+    S.b.run_booking = _real_run_booking
+check(len(_captured) == 1, '全部账号路径跑到了每个账号的 run_booking')
+check(all(p.get('schedule') is None for p in _captured),
+      '顶层 schedule=None（立即抢）时，账号参数里绝不允许复活出定时串',
+      repr([p.get('schedule') for p in _captured]))
+
+_captured2 = []
+try:
+    S.read_config = lambda: dict(_cfg18)
+    S.b.run_booking = lambda p, log=None, stop=None: (
+        _captured2.append(p) or {'success': False})
+    S.run_multi({'schedule': (8, 0, 0), 'submit': True, '_payload': {}},
+                lambda: False)
+finally:
+    S.read_config = _real_read_config
+    S.b.run_booking = _real_run_booking
+check(all(p.get('schedule') == (8, 0, 0) for p in _captured2),
+      '定时抢（schedule=(8,0,0)）仍按定时透传，不受影响')
+
+# —— 「现在就抢」弹窗勾选的账号子集 ——
+_a18b = A.default_account(_cfg18, name='测试号乙')
+_a18b['id'] = 'acc_b'
+_a18b['token'] = 'eyJhbGciOiJIUzUxMiJ9.fake.fake'
+_a18b['court_enabled'] = {c['name']: True for c in b.COURTS_FALLBACK}
+_cfg18b = dict(_cfg18)
+_cfg18b['accounts'] = [_a18, _a18b]
+_captured3 = []
+try:
+    S.read_config = lambda: dict(_cfg18b)
+    S.b.run_booking = lambda p, log=None, stop=None: (
+        _captured3.append(p) or {'success': False})
+    S.run_multi({'schedule': None, 'submit': True, '_payload': {},
+                 '_only_ids': ['acc_b']}, lambda: False)
+finally:
+    S.read_config = _real_read_config
+    S.b.run_booking = _real_run_booking
+check(len(_captured3) == 1 and _captured3[0].get('_account_id') == 'acc_b',
+      '勾选子集（_only_ids）时只跑被勾的账号', repr(len(_captured3)))
+
+print('\n[19] V4.4 日期完全手动：auto_roll 拆除 + 日期预检 + 空场计数')
+check(not hasattr(S, 'roll_target_date'),
+      'roll_target_date 已删除（不再静默改写目标日期）')
+_ok, _msg = S.date_precheck(date.today().isoformat(), 2)
+check(_ok, '今天合法')
+_ok, _msg = S.date_precheck((date.today() + timedelta(days=2)).isoformat(), 2)
+check(_ok, '今天 + 2 天合法（窗口内）')
+_ok, _msg = S.date_precheck((date.today() - timedelta(days=1)).isoformat(), 2)
+check(not _ok and '过去' in _msg, '昨天被拒绝', _msg)
+_ok, _msg = S.date_precheck((date.today() + timedelta(days=3)).isoformat(), 2)
+check(not _ok and '超出' in _msg, '今天 + 3 天超出窗口被拒绝', _msg)
+_ok, _msg = S.date_precheck('', 2)
+check(not _ok, '空日期被拒绝')
+_mx18 = b.build_matrix(
+    [{'name': '1号场', 'sku': 's1', 'weekly': b.FALLBACK_WEEKLY['1号场']},
+     {'name': '4号场', 'sku': 's4', 'weekly': b.FALLBACK_WEEKLY['4号场']}],
+    '周六', b.enumerate_slots('18:00', '22:00'),
+    {'s1': {'18:00-19:00'}, 's4': set()})
+_free18 = S.count_free_cells(_mx18)
+# 周六：1号场 18-22 全开 4 格 - 1 格被占 = 3；4号场全开 4 格 → 共 7
+check(len(_free18) == 7, f'空场计数正确（实际 {len(_free18)}）')
+check(('1号场', '19:00-20:00') in _free18,
+      '被占的 18-19 不在可订明细里，19-20 在')
 
 print('\n' + '=' * 50)
 if FAIL:

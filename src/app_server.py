@@ -426,22 +426,84 @@ def refresh_all_accounts(cfg, target, log, stop):
     return ok_n, len(todo)
 
 
-def roll_target_date(cfg, log):
-    """挂机跨天：把目标日期滚到「今天 + 可提前天数」。
+def date_precheck(d, max_days_ahead):
+    """目标日期合法性检查。返回 (ok, msg)；ok=False 时 msg 是给人看的原因。
 
-    不滚的话，昨晚填的日期到明早就超出预约窗口，直接抢不了。
+    【V4.4】「目标日期自动跟随（auto_roll_date）」已拆除：日期完全由用户
+    手动填，程序只负责核对并在不合法时明确拒绝，绝不静默改写。
     """
-    if not cfg.get('auto_roll_date', True):
-        return cfg
-    ahead = int(cfg.get('max_days_ahead') or 2)
-    new_d = (date_cls.today() + timedelta(days=ahead)).isoformat()
-    old_d = cfg.get('target_date') or ''
-    if new_d != old_d:
-        log(f'  · 目标日期自动跟随：{old_d or "未设置"} → {new_d}'
-            f'（今天 + {ahead} 天）')
-        cfg['target_date'] = new_d
-        acc.save(CONFIG_PATH, cfg)
-    return cfg
+    d = (d or '').strip()
+    if not d:
+        return False, '还没填目标日期（界面上方的「目标日期」），先填一下。'
+    try:
+        ahead = (date_cls.fromisoformat(d) - date_cls.today()).days
+    except Exception:
+        return False, f'目标日期格式无法解析：{d}'
+    if ahead < 0:
+        return False, (f'目标日期 {d} 已过去 {-ahead} 天。'
+                       f'请改成可预约窗口内的日期'
+                       f'（今天起最多提前 {int(max_days_ahead or 2)} 天）。')
+    if ahead > int(max_days_ahead or 2):
+        return False, (f'目标日期 {d} 距今 {ahead} 天，超出可预约窗口'
+                       f'（最多提前 {int(max_days_ahead or 2)} 天），请改近一点。')
+    return True, ''
+
+
+def count_free_cells(matrix):
+    """数出空场矩阵里『可抢』的格子，返回 [(场地, 时段), ...]（矩阵行序优先）。"""
+    return [(name, slot) for name, row in (matrix or {}).items()
+            for slot, st in (row or {}).items() if st == 'open']
+
+
+def report_free_courts(target_date, log, label='空场检查'):
+    """查一次目标日期的空场并汇报：日期 + 还剩几个可订 + 明细（只读，不占额度）。
+
+    【V4.4】替代「目标日期自动跟随」：不替你改日期，只把真实情况报给你。
+    返回 dict（含 count / free 明细，给前端提示条用）；查不了 / 没设日期返回 None。
+    """
+    d = (target_date or '').strip()
+    if not d:
+        log(f'[{label}] 还没设目标日期，先不查空场。')
+        return None
+    ok_d, why_d = date_precheck(d, read_config().get('max_days_ahead'))
+    if not ok_d:
+        log(f'[{label}] {why_d}')
+        return None
+    pool = acc.runnable(read_config())
+    if not pool:
+        log(f'[{label}] 没有可用账号（启用 + 未关场 + 有 token），无法查询空场。')
+        return None
+    token = (pool[0].get('token') or '').strip()
+    try:
+        weekday = b.weekday_cn_of(d)
+        session = b.build_session(8)
+        courts = b.api_places(session, token) or []
+        known = {c['sku'] for c in courts}
+        for c in b.COURTS_FALLBACK:
+            if c['sku'] not in known:
+                courts.append({'name': c['name'], 'sku': c['sku'], 'price': 20,
+                               'weekly': b.FALLBACK_WEEKLY.get(c['name'], {})})
+        slots = b.enumerate_slots('18:00', '22:00')
+        occupied, auth_fail = b.scout(session, token, courts, d,
+                                      workers=7, log=log)
+        if courts and auth_fail == len(courts):
+            log(f'[{label}] 查询失败：token 已失效（所有场地 getDay 都 401）。')
+            return None
+        matrix = b.build_matrix(courts, weekday, slots, occupied)
+    except Exception as e:
+        log(f'[{label}] 查询失败：{type(e).__name__}: {e}')
+        return None
+    free = count_free_cells(matrix)
+    log('')
+    log(f'[{label}] 目标日期 {d}（{weekday}）｜ 当天可订空场：{len(free)} 个')
+    for name, slot in free[:8]:
+        log(f'    · {name} {slot}')
+    if len(free) > 8:
+        log(f'    … 另有 {len(free) - 8} 个')
+    if not free:
+        log('    ⚠ 该日期已无可订场次 —— 很可能日期过时 / 已被抢光，建议换一天。')
+    return {'date': d, 'weekday': weekday, 'count': len(free),
+            'free': [{'court': n, 'slot': s} for n, s in free]}
 
 
 def preflight_refresh(params, log, stop):
@@ -463,6 +525,10 @@ def preflight_refresh(params, log, stop):
     if target is None:
         log('   ⚠ 定时时间解析不出来，跳过开抢前刷新（本次按立即执行处理）。')
         return
+
+    # 【V4.4】开抢前先报目标日期 + 当前剩余空场（只读）。日期完全手动，
+    # 程序只报实情，不替你改日期。
+    report_free_courts(cfg.get('target_date'), log, label='开抢前检查')
 
     if cfg.get('auto_refresh_token', True):
         lead = int(cfg.get('refresh_lead_min') or 15)
@@ -498,7 +564,10 @@ def preflight_refresh(params, log, stop):
                 '很可能是 401 —— 早上起来看一眼日志。')
         cfg = read_config()
 
-    cfg = roll_target_date(cfg, log)
+    # 【V4.4】auto_roll_date 已拆：不再静默改写目标日期，只重新读一次配置，
+    # 刷新完成后复查一遍空场（新 token 查得最准）。
+    cfg = read_config()
+    report_free_courts(cfg.get('target_date'), log, label='刷新后复查')
 
     # 把刷新结果回写进本次任务的参数（单账号直跑时用的是 params 里的 token）
     a = acc.get_account(cfg, params.get('_account_id'))
@@ -597,8 +666,15 @@ def spawn_refresh(accounts_todo, timeout):
             if refresh_one_account(cfg, a, timeout, append_log,
                                    lambda: _STOP.is_set()):
                 ok_n += 1
+        # 【V4.4】刷新完顺手用新 token 查一次目标日期的空场并报出来
+        # （用户要的「更新 token 后自动获取场地、报出还剩几片」）。
+        rep = None
+        if not _STOP.is_set():
+            rep = report_free_courts(read_config().get('target_date'),
+                                     append_log, label='刷新后空场检查')
         with _LOCK:
-            STATE['result'] = {'refreshed': ok_n, 'total': len(accounts_todo)}
+            STATE['result'] = {'refreshed': ok_n, 'total': len(accounts_todo),
+                               'free_report': rep}
         append_log(f' 完成：{ok_n}/{len(accounts_todo)} 个账号拿到新 token'
                    f'（耗时 {time.time() - t0:.1f}s）')
         close_run_log()
@@ -626,8 +702,13 @@ def run_multi(params, stop):
     log = append_log
     cfg = read_config()
     todo = acc.runnable(cfg)
+    # 【V4.4】「现在就抢」弹窗勾选后的账号子集（None / 空 = 全部可抢账号）
+    only = params.get('_only_ids')
+    if only:
+        wanted = {str(x) for x in only}
+        todo = [a for a in todo if str(a.get('id')) in wanted]
     if not todo:
-        msg = '账号库里没有可抢的账号（需要有 token，且没被停用）'
+        msg = '账号库里没有可抢的账号（需要有 token，且没被停用/关场）'
         log('× ' + msg)
         return {'success': False, 'error': msg, 'multi': True, 'runs': []}
 
@@ -661,8 +742,15 @@ def run_multi(params, stop):
         try:
             p = account_params(cfg, a['id'], params.get('_payload') or {})
             p['submit'] = bool(params.get('submit', True))
-            if params.get('schedule'):
-                p['schedule'] = params['schedule']
+            # 【V4.4 修 BUG】顶层给什么 schedule 就用什么 —— 包括 None（= 立即抢）。
+            # 必须用无条件赋值，不能用真值判断：原来的
+            #   `if params.get('schedule'): p['schedule'] = params['schedule']`
+            # 会把 None 跳过，于是 account_params 从 config/payload 里
+            # 复活出 '08:00:00'，「现在就抢（全部账号）」就被污染成
+            # 「死等到明天 8 点」（实证：run_20260927_081705.log
+            #  [任务] 立即抢单（全部账号）→ 等待到 07:59:58 开抢）。
+            p['schedule'] = params.get('schedule')
+            p['_fire_mode'] = params.get('_fire_mode')
             r = b.run_booking(p, log=log, stop=acc_stop)
         except Exception as e:
             log(f'  [异常] {name}：{type(e).__name__}: {e}')
@@ -900,8 +988,14 @@ def run_retoken(params):
 
     append_log('=' * 60)
     append_log(f'重新获取结束：成功 {len(done)} 个，失败 {len(fail)} 个')
+    # 【V4.4】重取完同样报一次目标日期的剩余空场
+    rep = None
+    if done and not _STOP.is_set():
+        rep = report_free_courts(read_config().get('target_date'),
+                                 append_log, label='刷新后空场检查')
     return {'success': bool(done), 'retoken': True, 'done': done, 'fail': fail,
             'has_same': any(d.get('same') for d in done),
+            'free_report': rep,
             'accounts': _view_accounts(read_config()),
             'active': read_config().get('active')}
 
@@ -1627,7 +1721,20 @@ class Handler(BaseHTTPRequestHandler):
             p = params_from(payload)
             p['submit'] = True
             p['schedule'] = None
-            if (payload.get('scope') or 'current') == 'all':
+            p['_fire_mode'] = 'now'          # 【V4.4】立即模式护栏标记
+            # 【V4.4】日期不合法直接拒绝启动（日期完全手动，绝不静默改）
+            ok_d, why_d = date_precheck(p.get('target_date'),
+                                        p.get('max_days_ahead'))
+            if not ok_d:
+                self._json({'ok': False, 'msg': why_d})
+                return
+            ids = payload.get('account_ids')
+            if ids:
+                # 【V4.4】弹窗勾选的账号子集
+                p['_only_ids'] = ids
+                STATE['task'] = f'立即抢单（{len(ids)} 个账号）'
+                spawn('book_multi', p)
+            elif (payload.get('scope') or 'current') == 'all':
                 STATE['task'] = '立即抢单（全部账号）'
                 spawn('book_multi', p)
             else:
@@ -1636,10 +1743,17 @@ class Handler(BaseHTTPRequestHandler):
         elif path == '/api/start_sched':
             p = params_from(payload)
             p['submit'] = True
+            p['_fire_mode'] = 'sched'
             p['schedule'] = parse_schedule(payload.get('schedule') or
                                            read_config().get('schedule'))
             if not p['schedule']:
                 self._json({'ok': False, 'msg': '定时时间格式不对'})
+                return
+            # 【V4.4】日期不合法直接拒绝启动
+            ok_d, why_d = date_precheck(p.get('target_date'),
+                                        p.get('max_days_ahead'))
+            if not ok_d:
+                self._json({'ok': False, 'msg': why_d})
                 return
             if (payload.get('scope') or 'current') == 'all':
                 STATE['task'] = '定时抢单（全部账号）'

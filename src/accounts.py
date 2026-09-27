@@ -109,8 +109,9 @@ def default_config():
         'auto_refresh_token': True,   # 定时抢时，开抢前自动重登拿新 token
         'refresh_lead_min': 15,       # 提前多少分钟刷新（默认开抢前 15 分钟）
         'refresh_timeout': 900,       # 单次刷新最多等多少秒（默认 15 分钟，够等到开抢）
-        # 【V4.1】挂机跨天：目标日期自动跟随「今天 + max_days_ahead」
-        'auto_roll_date': True,
+        # 【V4.4】auto_roll_date（目标日期自动跟随）已拆除：
+        # 它只做算术（今天 + N 天）不核对现实，会把早已抢光的日期当成"正确日期"，
+        # 给人错误的安全感。现在日期完全手动，程序只报「当天还剩几片空场」。
         # 【V4.3】开火提前量的下限（毫秒）。
         # 校时只能解决「本机钟和服务器钟不一样快」，解决不了**服务端放号任务
         # 自己晚触发** —— 2026-09-25 实测：按校时结果卡着 08:00:00 发过去，
@@ -242,9 +243,9 @@ def migrate(raw):
               'not_open_max_retries', 'unknown_max_retries', 'schedule',
               'one_per_day', 'stop_on_first', 'max_days_ahead', 'capture_timeout',
               'capture_port', 'mfa_timeout',
-              # 【V4.1】挂机自动刷新 / 目标日期跟随
+              # 【V4.1】挂机自动刷新
               'auto_refresh_token', 'refresh_lead_min', 'refresh_timeout',
-              'auto_roll_date',
+              # 【V4.4】auto_roll_date 已拆除，旧配置里残留的这个键直接丢弃
               # 【V4.3】开火提前量下限
               'fire_lead_ms'):
         if k in raw:

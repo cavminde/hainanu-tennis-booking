@@ -1079,6 +1079,22 @@ def scout(session, token, courts, d, workers=7, log=print):
     return occupied, auth_fail
 
 
+def resolve_schedule(params, log=print):
+    """归一化开抢时刻参数：返回 (h, m, s) / 'HH:MM:SS' 字符串 / None。
+
+    【V4.4 护栏】「立即抢」上下文（_fire_mode='now'）里绝不允许出现
+    定时参数 —— 它只可能是从 config / payload 里复活的旧值
+    （2026-09-27 实测：「立即抢单（全部账号）」被污染成死等次日 8 点，
+    见 dist/logs/run_20260927_081705.log）。发现就清掉并明确告警。
+    """
+    sched = params.get('schedule')
+    if sched and params.get('_fire_mode') == 'now':
+        log('⚠ 【护栏】立即抢单却带着定时参数（从配置里复活的旧值），'
+            '已忽略，立刻开抢，不做任何等待。')
+        return None
+    return sched
+
+
 # ---------------------------------------------------------------------------
 # 主流程
 # ---------------------------------------------------------------------------
@@ -1094,7 +1110,7 @@ def run_booking(params, log=print, stop=None):
     enabled_map = params.get('court_enabled') or {c['name']: True for c in COURTS_FALLBACK}
     strategy = params.get('sort_strategy') or SORT_COURT_RANDOM_TIME
     do_submit = bool(params.get('submit', True))
-    schedule = params.get('schedule')            # (h, m, s) 或 None
+    schedule = resolve_schedule(params, log)     # (h, m, s) 或 None（立即模式的污染已被清掉）
     one_per_day = bool(params.get('one_per_day', True))
     base_dir = params.get('base_dir') or '.'
 
@@ -1145,7 +1161,7 @@ def run_booking(params, log=print, stop=None):
         if ahead < 0:
             return (f'目标日期 {d} 已过去 {-ahead} 天。拒绝提交：'
                     f'过去的时段服务端照样会成交并扣校园卡。'
-                    f'（挂机过夜请打开「目标日期自动跟随」auto_roll_date）')
+                    f'（请把目标日期改到可预约窗口内，日期不再自动跟随）')
         if ahead > max_ahead:
             return (f'目标日期 {d} 距今 {ahead} 天，超出可预约窗口'
                     f'（最多提前 {max_ahead} 天）。现在提交必然被拒，'
@@ -1165,6 +1181,10 @@ def run_booking(params, log=print, stop=None):
     log(f' 反冲突随机：{"开" if rng.enabled else "关"}（签 {rng.fingerprint}）')
     log(f' 速率：最小间隔 {gov.min_interval}s + 抖动 ≤{int((params.get("jitter_ms") or 0))}ms '
         f'→ 理论上限约 {gov.theoretical_qps:.1f} 次/秒')
+    if do_submit:
+        # 【V4.4】把「立即 / 定时」明确打在表头上，语义一眼可辨
+        log(' 模式：' + ('定时抢单（等到点开火）' if schedule
+                      else '【立即抢单】马上开抢，不做任何等待'))
     log('=' * 66)
 
     result = {'success': False, 'slots': slots, 'weekday': weekday,
@@ -1301,7 +1321,8 @@ def run_booking(params, log=print, stop=None):
             result['error'] = '无可用候选'
             return result
         log('× 此刻窗口内还没有可抢的时段（多半是还没到放号时间）。')
-        log('  已设了定时，到点后会立刻重新侦察一次再抢 —— 先等着。')
+        if do_submit:
+            log('  已设了定时，到点后会立刻重新侦察一次再抢 —— 先等着。')
 
     if not do_submit:
         log('\n[预览模式] 仅侦察与规划，未提交任何订单。')
@@ -1678,7 +1699,7 @@ def run_booking(params, log=print, stop=None):
                 tried.add(key)
                 log('   × 超出可预约窗口（日期根本订不了），停止。')
                 log('     提示：目标日期需在「最多可提前天数」之内；'
-                    '挂机过夜请打开 auto_roll_date 让日期自动跟随。')
+                    '请手动把目标日期改到可预约窗口内（日期不再自动跟随）。')
                 result['stop_reason'] = 'out_of_window'
                 result['success'] = False
                 return result

@@ -171,8 +171,9 @@ details summary:hover{color:var(--accent)}
       <!-- 凭证与目标 · 账号库 -->
       <div class="card">
         <h2>凭证与目标 · 账号库</h2>
-        <label>目标日期（所有账号共用）</label>
+        <label>目标日期（所有账号共用，完全手动，不会自动改）</label>
         <input type="date" id="date">
+        <div class="hint" id="freeHint" style="margin-top:6px">填好日期后，「刷新 token」或开抢时会自动报出当天还剩几片空场。</div>
 
         <label style="margin-top:12px">已保存的账号（一行一个）</label>
         <table class="acct">
@@ -335,16 +336,9 @@ details summary:hover{color:var(--accent)}
         <input type="number" id="refreshTimeout" min="10" max="1800" step="10"
                title="万一要手机确认多因子认证，浏览器会停在这儿等你；最多等这么久，绝不会拖过开抢时刻"></div>
     </div>
-    <div class="bar" style="margin-top:8px">
-      <div class="sw" id="autoRollSw"></div>
-      <span style="font-size:13px">目标日期自动跟随「今天 + 可提前天数」</span>
-    </div>
-    <div class="hint" id="rollHint">
-      跨天挂机必开：昨晚填的日期到明早就超出预约窗口，程序会在刷新时自动改到正确的那天。
-    </div>
     <div class="btns" style="margin-top:9px">
       <button id="refreshNow" style="font-size:12px;padding:6px 12px">🔑 立即刷新 token</button>
-      <span class="hint" style="align-self:center">睡前点一次，确认「记住密码」已生效</span>
+      <span class="hint" style="align-self:center">睡前点一次，确认「记住密码」已生效；刷完会自动报出目标日期还剩几片空场</span>
     </div>
   </div>
 
@@ -370,8 +364,8 @@ details summary:hover{color:var(--accent)}
         </select></div>
     </div>
     <div class="hint" id="schedHint" style="margin:-4px 0 8px">
-      两个按钮，两个用法：<b>⚡ 现在就抢</b> = 立刻发出去（下午看到有空场就用它）；
-      <b>⏰ 8:00 自动抢</b> = 挂机等明早 8:00 放号那一刻（会自动校正本机与服务器的时钟差）。
+      两个按钮，两个用法：<b>⚡ 现在就抢</b> = 弹窗勾账号后<b>立刻</b>发出去，不等 8 点（下午看到有空场就用它）；
+      <b>⏰ 8:00 自动抢</b> = 挂机等下一个 8:00 放号那一刻（会自动校正本机与服务器的时钟差，开抢前会先报当天剩几片空场）。
     </div>
     <div class="btns">
       <button class="pri" id="goNow">⚡ 现在就抢</button>
@@ -791,7 +785,6 @@ function globals(){
     auto_refresh_token: $('autoRefreshSw').classList.contains('on'),
     refresh_lead_min: parseInt($('leadMin').value)||15,
     refresh_timeout: parseInt($('refreshTimeout').value)||900,
-    auto_roll_date: $('autoRollSw').classList.contains('on'),
   };
 }
 function collectCfg(){
@@ -829,7 +822,6 @@ function apply(c){
   $('autoRefreshSw').classList.toggle('on', c.auto_refresh_token!==false);
   $('leadMin').value = c.refresh_lead_min ?? 15;
   $('refreshTimeout').value = c.refresh_timeout ?? 900;
-  $('autoRollSw').classList.toggle('on', c.auto_roll_date!==false);
   updRefreshHint();
   $('stopFirst').value = (c.stop_on_first === false) ? '0' : '1';
   $('stopFirstRow').style.display = $('scope').value==='all' ? '' : 'none';
@@ -982,6 +974,16 @@ async function poll(){
       } else {
         toast(f ? `重新获取：成功 ${d} 个，失败 ${f} 个（看日志）`
                 : `✓ ${d} 个账号的 token 已更新`);
+      }
+    }
+    /* 【V4.4】刷新 token / 重取 token 后，把「目标日期还剩几片空场」显示到日期框下面 */
+    if(s.result && s.result.free_report){
+      const fr = s.result.free_report;
+      const el = $('freeHint');
+      if(el && fr){
+        el.innerHTML = fr.count > 0
+          ? `目标日期 <b>${fr.date}（${fr.weekday}）</b> ｜ 当天可订空场 <b style="color:#4ade80">${fr.count}</b> 个`
+          : `目标日期 <b>${fr.date}（${fr.weekday}）</b> ｜ <b style="color:#f87171">当天已无可订场次</b> —— 日期可能已过时，建议换一天`;
       }
     }
     if(s.result) renderResult(s.result);
@@ -1179,6 +1181,49 @@ function askPasswords(need, title, tip){
   });
 }
 
+/* 【V4.4】「现在就抢」弹窗勾账号：返回选中的 id 列表，取消返回 null。
+   列出全部账号，可抢的（启用+未关场+有 token）默认全勾，
+   不可抢的灰掉并注明原因。 */
+function pickAccounts(){
+  return new Promise(resolve=>{
+    const mask = document.createElement('div');
+    mask.className = 'mask';
+    const rows = accounts.map(a=>{
+      const ce = a.court_enabled || {};
+      const ks = Object.keys(ce);
+      const closed = ks.length>0 && ks.every(k=>!ce[k]);
+      const noTok = !((a.token||'').trim());
+      const off = a.enabled === false;
+      const dis = off || closed || noTok;
+      const why = off ? '已停用' : (closed ? '已关场' : (noTok ? '无 token' : ''));
+      return `<div class="pwrow"><label style="display:flex;align-items:center;gap:8px;flex:1;cursor:pointer">
+        <input type="checkbox" data-id="${esc(a.id)}" ${dis?'disabled':''} ${dis?'':'checked'} style="flex:none;width:auto">
+        <span style="flex:1;min-width:0">${esc(a.name||a.id)}
+          <span style="color:var(--dim);font-size:11px">　${esc(a.username||'')}${why?(' · '+why):''}</span>
+        </span></label></div>`;
+    }).join('');
+    mask.innerHTML = `<div class="box">
+      <h3>⚡ 现在就抢 · 选账号</h3>
+      <div class="tip">勾选的账号会<b>立刻</b>按各自的「目标日期 / 时间窗口 / 场地顺序」开抢，
+        <b>不做任何等待</b>。没勾的账号今天不发任何请求。</div>
+      ${rows || '<div class="tip">账号库是空的，先添加账号。</div>'}
+      <div class="foot">
+        <button id="pkCancel">取消</button>
+        <button class="pri" id="pkOk">开始抢</button>
+      </div></div>`;
+    document.body.appendChild(mask);
+    const close = v => { mask.remove(); resolve(v); };
+    mask.querySelector('#pkCancel').onclick = ()=>close(null);
+    mask.onclick = e => { if(e.target===mask) close(null); };
+    mask.querySelector('#pkOk').onclick = ()=>{
+      const ids = [...mask.querySelectorAll('input[type=checkbox]:not(:disabled):checked')]
+        .map(i=>i.dataset.id);
+      if(!ids.length){ toast('至少勾一个账号'); return; }
+      close(ids);
+    };
+  });
+}
+
 /* 统一的启动入口：先问密码，再让后端开跑 */
 async function startRetoken(ids, onlyInvalid){
   const plan = await api('/api/accounts/retoken_plan',
@@ -1267,14 +1312,18 @@ function appendLogLine(s){
 $('tabBody').innerHTML = tabBodyHTML();
 fillTimes();
 
-$('goNow').onclick   = ()=>start('/api/start_now');
+$('goNow').onclick   = async ()=>{
+  const ids = await pickAccounts();
+  if(!ids) return;
+  start('/api/start_now', {scope:'all', account_ids:ids});
+};
 $('preview').onclick = ()=>start('/api/preview');
 let countdownTimer = null;
 function stopCountdown(){
   if(countdownTimer){ clearInterval(countdownTimer); countdownTimer = null; }
   const h = $('schedHint');
-  if(h) h.innerHTML = '两个按钮，两个用法：<b>⚡ 现在就抢</b> = 立刻发出去（下午看到有空场就用它）；'
-    + '<b>⏰ 8:00 自动抢</b> = 挂机等明早 8:00 放号那一刻（会自动校正本机与服务器的时钟差）。';
+  if(h) h.innerHTML = '两个按钮，两个用法：<b>⚡ 现在就抢</b> = 弹窗勾账号后<b>立刻</b>发出去，不等 8 点（下午看到有空场就用它）；'
+    + '<b>⏰ 8:00 自动抢</b> = 挂机等下一个 8:00 放号那一刻（会自动校正本机与服务器的时钟差，开抢前会先报当天剩几片空场）。';
 }
 function startCountdown(){
   stopCountdown();
@@ -1326,7 +1375,6 @@ $('antiSw').onclick  = ()=>{ $('antiSw').classList.toggle('on'); scheduleSave();
 $('autoRefreshSw').onclick = ()=>{
   $('autoRefreshSw').classList.toggle('on'); updRefreshHint(); scheduleSave();
 };
-$('autoRollSw').onclick = ()=>{ $('autoRollSw').classList.toggle('on'); scheduleSave(); };
 $('leadMin').oninput = updRefreshHint;
 ['leadMin','refreshTimeout'].forEach(id=>$(id).addEventListener('change', scheduleSave));
 $('refreshNow').onclick = async ()=>{
@@ -1340,6 +1388,11 @@ $('passphrase').onchange = ()=>{ loadFp(); scheduleSave(); };
 ['minInt','jitter'].forEach(id=>$(id).oninput=updQps);
 ['minInt','jitter','burst','parFirst','fireLead','workers','refresh','notopen','sched','date','stopFirst'].forEach(id=>{
   $(id).addEventListener('change', scheduleSave);
+});
+/* 【V4.4】日期一改，旧的空场数就作废，提示重新查询 */
+$('date').addEventListener('change', ()=>{
+  const h=$('freeHint');
+  if(h) h.textContent='日期已改，空场数会在下次「刷新 token」或开抢时重新报告。';
 });
 $('wstart').onchange = ()=>{ pullToAcc(); scheduleSave(); };
 $('wend').onchange   = ()=>{ pullToAcc(); scheduleSave(); };
