@@ -1095,6 +1095,94 @@ def resolve_schedule(params, log=print):
     return sched
 
 
+# 【V4.4 修订】放号周期。详见 app_server.RELEASE_HMS 的说明，
+# 这里必须是同一套常数：每天 08:00 放出「今天 + 可提前天数」那一场。
+RELEASE_HMS = (8, 0, 0)
+
+
+def norm_schedule(schedule):
+    """把 '08:00:00' / (8,0,0) / [8,0,0] 归一成 (h, m, s) 元组；不合法一律 None。"""
+    if schedule is None:
+        return None
+    if isinstance(schedule, str):
+        try:
+            parts = [int(x) for x in schedule.split(':')]
+            while len(parts) < 3:
+                parts.append(0)
+            schedule = tuple(parts[:3])
+        except Exception:
+            return None
+    if not (isinstance(schedule, (tuple, list)) and len(schedule) == 3):
+        return None
+    try:
+        h, m, s = (int(schedule[0]), int(schedule[1]), int(schedule[2]))
+    except Exception:
+        return None
+    if not (0 <= h < 24 and 0 <= m < 60 and 0 <= s < 60):
+        return None
+    return (h, m, s)
+
+
+def release_moment(d, max_days_ahead=2, hms=RELEASE_HMS):
+    """某一天的放号时刻 =（那天 − 可提前天数）那天的 08:00。解析不了返回 None。"""
+    try:
+        day = date_cls.fromisoformat((d or '').strip())
+    except Exception:
+        return None
+    h, m, s = hms
+    start = day - timedelta(days=int(max_days_ahead or 2))
+    return datetime(start.year, start.month, start.day, h, m, s)
+
+
+def date_block_reason(d, max_days_ahead=2, at=None):
+    """目标日期的拦截原因；None = 合法。
+
+    【V4.4】按放号周期判断，并且区分两种「超出窗口」：
+      · 真的填太远（连放号时刻都过了还超窗）→ 现在提交必然被拒；
+      · 只是**还没到放号时刻** → 明确说"要等 X 才开放"。
+    """
+    if not d:
+        return None                     # 空日期交给调用方专门的分支报「未选日期」
+    ref = at or datetime.now()
+    try:
+        day = date_cls.fromisoformat(d)
+        ahead = (day - ref.date()).days
+    except Exception as e:
+        return f'目标日期格式无法解析（{d}）：{e}'
+    max_ahead = int(max_days_ahead or 2)
+    if ahead < 0:
+        return (f'目标日期 {d} 已过去 {-ahead} 天。拒绝提交：'
+                f'过去的时段服务端照样会成交并扣校园卡。'
+                f'（请把目标日期改到可预约窗口内，日期不再自动跟随）')
+    if ahead > max_ahead:
+        rel = release_moment(d, max_ahead)
+        if rel is None:
+            return f'目标日期格式无法解析（{d}）'
+        if ref < rel:
+            return (f'目标日期 {d} 还没放号 —— 要等到 '
+                    f'{rel.strftime("%m-%d %H:%M")} 才开放'
+                    f'（每天 {RELEASE_HMS[0]:02d}:{RELEASE_HMS[1]:02d} '
+                    f'放出「今天 + {max_ahead} 天」那一场）。'
+                    f'定时挂机时，程序会在开火那一刻重新检查。')
+        return (f'目标日期 {d} 距今 {ahead} 天，超出可预约窗口'
+                f'（最多提前 {max_ahead} 天）。现在提交必然被拒，'
+                f'只会白耗请求还可能踩限流。')
+    return None
+
+
+def fire_moment(schedule, now=None):
+    """定时任务的开火时刻：今天该点已过就顺延到明天。"""
+    sched = norm_schedule(schedule)
+    if not sched:
+        return None
+    now = now or datetime.now()
+    h, m, s = sched
+    target = now.replace(hour=h, minute=m, second=s, microsecond=0)
+    if target <= now:
+        target += timedelta(days=1)
+    return target
+
+
 # ---------------------------------------------------------------------------
 # 主流程
 # ---------------------------------------------------------------------------
@@ -1111,6 +1199,10 @@ def run_booking(params, log=print, stop=None):
     strategy = params.get('sort_strategy') or SORT_COURT_RANDOM_TIME
     do_submit = bool(params.get('submit', True))
     schedule = resolve_schedule(params, log)     # (h, m, s) 或 None（立即模式的污染已被清掉）
+    # 统一归一化，后面「日期拦截」和「定时等待」两处都用同一份
+    schedule = norm_schedule(schedule)
+    # 【V4.4】定时的请求要到这一刻才发出去 —— 日期必须按它判断，不能按"现在"
+    fire_at = fire_moment(schedule) if schedule else None
     one_per_day = bool(params.get('one_per_day', True))
     base_dir = params.get('base_dir') or '.'
 
@@ -1148,27 +1240,20 @@ def run_booking(params, log=print, stop=None):
     # 必须在打表头之前做：weekday_cn_of() 遇到解析不了的日期会直接抛异常。
     # V4.1 这里只打一行警告就继续跑，而服务端对过去的时段照样受理并扣校园卡 ——
     # 于是「目标日期已过去」不再是无害的提示，而是会真金白银下单的入口。改成硬失败。
-    def date_block():
-        """返回拦截原因；None 表示日期合法。做成闭包是因为定时任务
-        等待几小时后必须【再查一次】：跨零点后今天变成昨天，日期就过期了。"""
-        if not d:
-            return None            # 空日期交给下面专门的分支报「未选日期」
-        try:
-            ahead = (date_cls.fromisoformat(d) - date_cls.today()).days
-        except Exception as e:
-            return f'目标日期格式无法解析（{d}）：{e}'
-        max_ahead = int(params.get('max_days_ahead') or 2)
-        if ahead < 0:
-            return (f'目标日期 {d} 已过去 {-ahead} 天。拒绝提交：'
-                    f'过去的时段服务端照样会成交并扣校园卡。'
-                    f'（请把目标日期改到可预约窗口内，日期不再自动跟随）')
-        if ahead > max_ahead:
-            return (f'目标日期 {d} 距今 {ahead} 天，超出可预约窗口'
-                    f'（最多提前 {max_ahead} 天）。现在提交必然被拒，'
-                    f'只会白耗请求还可能踩限流。')
-        return None
+    def date_block(at=None):
+        """返回拦截原因；None 表示日期合法。
 
-    block = date_block()
+        at = 参考时刻（默认「现在」）。做成闭包是因为定时任务等待几小时后
+        必须【再查一次】：跨零点后今天变成昨天，日期就过期了。
+
+        【V4.4 修订】定时任务的请求是到「开火那一刻」才发出去的，所以
+        刚启动时必须按 **fire_at** 判断，不能按「现在」——
+        否则 27 号晚上挂机订 30 号会被误判成"距今 3 天"直接拒绝
+        （实测：日志里 0.0s 就 abort，根本没等到明早 8 点）。
+        """
+        return date_block_reason(d, params.get('max_days_ahead') or 2, at=at)
+
+    block = date_block(fire_at)
     weekday = weekday_cn_of(d) if (d and not block) else ''
 
     log('=' * 66)
@@ -1330,23 +1415,10 @@ def run_booking(params, log=print, stop=None):
 
     # ---------- 5. 定时 ----------
     if schedule:
-        # 允许传 (h,m,s) 元组，也允许传 '07:59:58' 字符串
-        if isinstance(schedule, str):
-            try:
-                parts = [int(x) for x in schedule.split(':')]
-                while len(parts) < 3:
-                    parts.append(0)
-                schedule = tuple(parts[:3])
-            except Exception:
-                schedule = None
+        # schedule 已在上面归一化成 (h, m, s)（'07:59:58' 这类字符串也认）
         if schedule and len(schedule) == 3:
-            h, m, s = schedule
-            target = datetime.now().replace(hour=h, minute=m, second=s,
-                                            microsecond=0)
-            # 今天的这个点已经过了（比如下午两点才点的「8:00 开抢」），
-            # 那就等明天早上那一场，别一启动就立刻开打。
-            if target <= datetime.now():
-                target += timedelta(days=1)
+            # fire_at 与上面日期拦截用的是同一个开火时刻，避免两处算出不同的值
+            target = fire_at or datetime.now()
 
             # 先量一下本机和服务器差多少时间，把开抢时刻校正过去。
             # 这一步很关键：系统时钟快/慢 1 秒，就早/晚 1 秒，

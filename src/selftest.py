@@ -875,6 +875,29 @@ _lo, _hi = S.date_window(_2723, _MAXA)
 check(_lo.isoformat() == '2026-09-27' and _hi.isoformat() == '2026-09-29',
       '可预约区间 = 今天 ~ 今天 + 2')
 
+print('\n[21] V4.4 修订（b）：run_booking 内部的日期拦截同样按放号周期')
+# 上一轮只修了启动前的预检（app_server.date_precheck），漏了 run_booking 里
+# 的 date_block() —— 它仍按「现在」算窗口，于是 27 号晚上挂机订 30 号
+# 会在 0.0s 就被 abort（日志：「距今 3 天，超出可预约窗口」）。
+_r = b.date_block_reason('2026-09-30', 2, at=datetime(2026, 9, 27, 23, 0))
+check(_r is not None and '还没放号' in _r,
+      '27 号 23:00 看 30 号：提示"还没放号"，不再是"超出 3 天"', repr(_r))
+check(b.date_block_reason('2026-09-30', 2, at=datetime(2026, 9, 28, 8, 0)) is None,
+      '★ 28 号 08:00（开火时刻）看 30 号：合法 —— 原来在这里被误杀')
+check(b.date_block_reason('2026-09-29', 2, at=datetime(2026, 9, 28, 8, 0)) is None,
+      '28 号 08:00 看 29 号：合法（仍在窗口内）')
+_r = b.date_block_reason('2026-09-26', 2, at=datetime(2026, 9, 27, 23, 0))
+check(_r is not None and '过去' in _r, '已过去的日期仍被拦截')
+check(b.norm_schedule('08:00:00') == (8, 0, 0), 'schedule 字符串归一成元组')
+check(b.norm_schedule('乱码') is None, '非法 schedule → None')
+check(b.norm_schedule(None) is None, '空 schedule → None')
+check(b.fire_moment((8, 0, 0), now=datetime(2026, 9, 27, 23, 0))
+      == datetime(2026, 9, 28, 8, 0), '开火时刻：23 点挂机 → 次日 08:00')
+check(b.fire_moment((8, 0, 0), now=datetime(2026, 9, 28, 7, 0))
+      == datetime(2026, 9, 28, 8, 0), '开火时刻：早上 7 点 → 当天 08:00')
+check(b.release_moment('2026-09-30', 2) == datetime(2026, 9, 28, 8, 0),
+      'booker 侧的放号时刻与 app_server 一致')
+
 print('\n' + '=' * 50)
 if FAIL:
     print(f'✗ {len(FAIL)} 项未通过：')
