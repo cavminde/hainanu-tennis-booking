@@ -1,0 +1,27 @@
+{
+  "version": "4.0",
+  "_说明": "这是配置模板。真正生效的是 exe 旁边的 config.json（首次启动自动生成），里面会有你的 token，别外传。",
+  "accounts": [],
+  "active": "",
+  "target_date": "",
+  "anti_collision": true,
+  "passphrase": "",
+
+  "_急速抢单参数": "按实测调好的最优档，一般不用动。服务端限流门槛约 9 次/秒，这里取 6.7 次/秒留余量。",
+  "min_interval": 0.15,
+  "jitter_ms": 0,
+  "burst": 2,
+  "scout_workers": 14,
+  "refresh_rounds": 0,
+  "parallel_first": 0,
+  "not_open_max_retries": 120,
+  "unknown_max_retries": 3,
+
+  "schedule": "08:00:00",
+  "one_per_day": true,
+  "max_days_ahead": 2,
+  "capture_timeout": 300,
+  "capture_port": 8899,
+  "mfa_timeout": 300,
+  "login_type": "01"
+}
